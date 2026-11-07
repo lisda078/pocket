@@ -60,7 +60,7 @@ button{font-family:inherit;color:inherit}
 .view.on>.scroll{animation:fadein .2s ease}
 @keyframes fadein{from{opacity:0}to{opacity:1}}
 .scroll{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding:calc(env(safe-area-inset-top) + 44px) 0 calc(env(safe-area-inset-bottom) + 84px)}
-.page{position:absolute;inset:0;background:var(--bg);z-index:4}
+.page{position:absolute;inset:0;background:var(--bg);z-index:5}
 .page.push{animation:push .45s var(--ease)}
 @keyframes push{from{transform:translateX(100%);box-shadow:-10px 0 30px rgba(0,0,0,.15)}to{transform:none}}
 
@@ -1301,6 +1301,39 @@ function renderActivity() {
 }
 
 /* ================= Insights ================= */
+// Per-category picture over the last 6 months up to `end`: monthly average, this month vs usual, visits, average purchase.
+const FIXED = ["housing", "loan", "bills"];
+function catStats(end) {
+  const months = Array.from({length:6}, (_, i) => addMonths(end, i - 5));
+  const active = months.filter(k => monthTx(k).some(isSpend));
+  const cutDay = end === ymOf(todayISO()) ? new Date().getDate() : 31;
+  const out = {};
+  for (const k of months) for (const t of monthTx(k)) if (isSpend(t)) {
+    const c = effCat(t), o = out[c] ||= {id:c, per:Object.fromEntries(months.map(m => [m, 0])), sofar:Object.fromEntries(months.map(m => [m, 0])), n:0, total:0, biggest:null, places:{}};
+    if (+t.date.slice(8) <= cutDay) o.sofar[k] = r2(o.sofar[k] + effSpend(t));
+    const v = effSpend(t); o.per[k] = r2(o.per[k] + v); o.n++; if (k !== ymOf(todayISO())) o.nc = (o.nc || 0) + 1; o.total = r2(o.total + v);
+    if (!o.biggest || v > effSpend(o.biggest)) o.biggest = t;
+    const pl = o.places[t.merchant] ||= {v:0, n:0}; pl.v = r2(pl.v + v); pl.n++;
+  }
+  const nAct = Math.max(1, active.filter(k => k !== end || end !== ymOf(todayISO())).length || active.length);
+  const list = Object.values(out).map(o => {
+    const prev = months.slice(0, -1).filter(k => active.includes(k));
+    const usual = prev.length ? r2(prev.reduce((a, k) => a + o.per[k], 0) / prev.length) : null;
+    const cur = o.per[end];
+    // compare this month fairly: if it's the current month, scale "usual" to today's day
+    const usualSoFar = prev.length ? r2(prev.reduce((a, k) => a + o.sofar[k], 0) / prev.length) : null;
+    const completeMonths = months.filter(k => active.includes(k) && !(k === ymOf(todayISO())));
+    const avg = r2((completeMonths.length ? completeMonths.reduce((a, k) => a + o.per[k], 0) / completeMonths.length : o.total));
+    return {...o, c:catById(o.id) || catById("other"), usual, usualSoFar, cur, avg, ticket:r2(o.total / o.n), perMonthCount:r2(completeMonths.length ? (o.nc || 0) / completeMonths.length : o.n), fixed:FIXED.includes(o.id)};
+  }).sort((a, b) => b.avg - a.avg);
+  return {months, active, list, nAct};
+}
+function trendPill(x) {
+  if (x.usualSoFar === null || x.usualSoFar < 5 || !x.cur) return "";
+  const d = (x.cur - x.usualSoFar) / x.usualSoFar;
+  if (Math.abs(d) < .1) return `<span class="pill">as usual</span>`;
+  return d > 0 ? `<span class="pill warn">▲ ${Math.round(d * 100)}%</span>` : `<span class="pill ok">▼ ${Math.round(-d * 100)}%</span>`;
+}
 function rangeMonths() { const end = UI.statsMonth; if (UI.range === "month") return [end]; const n = UI.range === "6m" ? 6 : 12; return Array.from({length:n}, (_, i) => addMonths(end, i - n + 1)); }
 function renderStats() {
   const months = rangeMonths(), list = months.flatMap(monthTx), spent = spendOf(list), income = incomeOf(list), byCat = catTotals(list);
@@ -1320,6 +1353,17 @@ function renderStats() {
   } else h += `<div class="group"><div class="empty">No spending in this period yet.</div></div>`;
   const trendM = Array.from({length:6}, (_, i) => addMonths(UI.statsMonth, i - 5));
   h += `<div class="sh"><span>Money in and out, last 6 months</span></div><div class="chart">${barsSVG(trendM)}<div class="legend" style="margin-top:6px"><span><i class="dot" style="--c:${pc(1)}"></i>Money out</span><span><i class="dot" style="--c:${pc(0)}"></i>Money in</span></div><div class="tip"></div></div>`;
+  const cs = catStats(UI.statsMonth);
+  if (cs.list.length) {
+    const top = cs.list[0].avg || 1, totalAvg = cs.list.reduce((a, x) => a + x.avg, 0) || 1;
+    h += `<div class="sh"><span>Where your money goes most</span><span style="text-transform:none">per month</span></div><div class="group">${cs.list.slice(0, 10).map((x, i) => `<button class="row" data-a="page" data-id="catdetail" data-x="${x.id}"><span class="num muted" style="width:16px;text-align:right;font-size:15px">${i + 1}</span>${icoHTML(x.c)}<div class="body"><div class="tt"><div class="t1">${esc(x.c.name)}</div><div class="bar"><i style="--c:${catCol(x.c)};width:${x.avg / top * 100}%"></i></div><div class="t2" style="margin-top:3px;font-size:13px">${Math.round(x.avg / totalAvg * 100)}% · ${x.perMonthCount >= 1 ? Math.round(x.perMonthCount) + "×/month" : "now and then"}</div></div><div class="amt">${money0(x.avg)}<small>${trendPill(x) || "&nbsp;"}</small></div>${IC.chev}</div></button>`).join("")}</div>`;
+    h += `<div class="sf">Average per month over your last ${cs.nAct} month${cs.nAct === 1 ? "" : "s"}. The arrow compares ${esc(monthOnly(UI.statsMonth))} with the same days in previous months. Tap a category for details.</div>`;
+    const flex = cs.list.filter(x => !x.fixed && x.avg >= 10), fixed = cs.list.filter(x => x.fixed), fSum = r2(fixed.reduce((a, x) => a + x.avg, 0)), xSum = r2(flex.reduce((a, x) => a + x.avg, 0));
+    if (flex.length) {
+      h += `<div class="sh"><span>What you can change</span></div><div class="tiles" style="margin-top:0"><div class="tile"><div class="k">Fixed costs</div><div class="v">${money0(fSum)}</div><div class="s">Home, loans, bills: hard to change month to month</div></div><div class="tile"><div class="k">Everyday spending</div><div class="v">${money0(xSum)}</div><div class="s">Where small changes add up</div></div></div>`;
+      h += `<div class="group" style="margin-top:10px">${flex.slice(0, 3).map(x => { const cut = r2(x.avg * .2); return `<button class="row" data-a="page" data-id="catdetail" data-x="${x.id}">${icoHTML(x.c)}<div class="body"><div class="tt"><div class="t1">${esc(x.c.name)}: spend 20% less</div><div class="t2">and keep <b style="color:var(--pos)">${money0(cut * 12)} a year</b> (${money0(cut)} a month)</div></div>${IC.chev}</div></button>`; }).join("")}</div>`;
+    }
+  }
   const merch = {}; for (const t of list.filter(isSpend)) { const k = t.merchant; merch[k] ||= {v:0, n:0, cat:t.cat}; merch[k].v += effSpend(t); merch[k].n++; }
   const top = Object.entries(merch).sort((a, b) => b[1].v - a[1].v).slice(0, 6);
   const freq = Object.entries(merch).sort((a, b) => b[1].n - a[1].n)[0];
@@ -1356,6 +1400,20 @@ function barsSVG(months) {
     g += bar(x0, d.out, pc(1), tip) + bar(x0 + bw + 2, d.inn, pc(0), tip) + `<text x="${L + i * cw + cw / 2}" y="${H - 6}" text-anchor="middle">${esc(monthShort(d.k))}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Money in and out per month">${g}</svg>`;
+}
+function catBarsSVG(points, color, avgLine) {
+  const W = 340, H = 160, L = 40, B = 22, T = 10;
+  const max = niceMax(Math.max(...points.map(p => p.v), avgLine, 1)), y = v => T + (H - T - B) * (1 - v / max);
+  const cw = (W - L) / points.length, bw = Math.min(26, cw - 14);
+  let g = "";
+  for (let i = 0; i <= 3; i++) { const v = max * i / 3; g += `<line class="grid" x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 3.5}" text-anchor="end">${kfmt(v)}</text>`; }
+  points.forEach((p, i) => {
+    const x = L + i * cw + (cw - bw) / 2, top = y(p.v), hh = H - B - top, r = Math.min(4, hh, bw / 2);
+    if (hh > .5) g += `<path d="M${x} ${H - B}V${top + r}q0 -${r} ${r} -${r}h${bw - 2 * r}q${r} 0 ${r} ${r}V${H - B}z" fill="${color}" opacity="${i === points.length - 1 ? 1 : .55}"/>`;
+    g += `<rect x="${x - 4}" y="${T}" width="${bw + 8}" height="${H - B - T}" fill="transparent" data-tip="<b>${esc(monthLong(p.k))}</b><br>${esc(money(p.v))}"/><text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(monthShort(p.k))}</text>`;
+  });
+  g += `<line x1="${L}" x2="${W}" y1="${y(avgLine)}" y2="${y(avgLine)}" stroke="var(--label2)" stroke-width="1.2" stroke-dasharray="4 4"/><text x="${W}" y="${y(avgLine) - 5}" text-anchor="end">average ${esc(money0(avgLine))}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spending per month">${g}</svg>`;
 }
 function lineSVG(points, {color = pc(0), label = "Value"} = {}) {
   const W = 340, H = 150, L = 44, B = 22, T = 12;
@@ -1490,6 +1548,26 @@ const PAGES = {
     let h = pageNav("Uploads") + `<div class="scroll"><h1 class="lt">Uploads</h1>`;
     if (!list.length) return h + `<div class="empty"><b>No uploads yet</b>Statements and payslips you upload are listed here.</div></div>`;
     return h + `<div class="group">${list.map(i => `<div class="row"><span class="ico" style="--c:${i.kind === "payslip" ? catCol(catById("income")) : pc(5)}">${i.kind === "payslip" ? "💶" : "🏦"}</span><div class="body"><div class="tt"><div class="t1">${i.kind === "payslip" ? "Payslip" : esc(i.bank)} · ${esc(monthLong(i.period))}</div><div class="t2">${esc(i.file || "")}${i.count ? " · " + i.count + " lines" : ""}</div></div>${i.ok ? '<span class="pill ok">Totals match</span>' : ""}</div></div>`).join("")}</div></div>`;
+  },
+  catdetail(pg) {
+    const cs = catStats(UI.statsMonth), x = cs.list.find(o => o.id === pg.x), c = catById(pg.x);
+    if (!x || !c) return pageNav(c ? c.name : "") + `<div class="scroll"><h1 class="lt">${esc(c ? c.name : "")}</h1><div class="empty">No spending here in the last 6 months.</div></div>`;
+    let h = pageNav(c.name, `<button class="nb ic" data-a="filtercat" data-id="${c.id}" aria-label="See transactions">${IC.search}</button>`) + `<div class="scroll"><div class="ltrow"><h1 class="lt">${esc(c.name)}</h1><span style="font-size:30px;margin-bottom:6px">${esc(c.emoji)}</span></div>`;
+    h += `<div class="hero"><div class="k">On average per month</div><div class="big">${money(x.avg)}</div><div class="meta"><span>${esc(monthOnly(UI.statsMonth))} <b class="num">${money0(x.cur)}</b></span>${trendPill(x)}${c.budget ? `<span>Limit <b class="num">${money0(c.budget)}</b></span>` : ""}</div></div>`;
+    const pts = cs.months.map(k => ({k, v:x.per[k]}));
+    h += `<div class="sh"><span>Last 6 months</span></div><div class="chart">${catBarsSVG(pts, catCol(c), x.avg)}<div class="tip"></div></div>`;
+    h += `<div class="tiles"><div class="tile"><div class="k">Purchases</div><div class="v">${x.perMonthCount >= 1 ? Math.round(x.perMonthCount) : x.perMonthCount.toLocaleString(undefined, {maximumFractionDigits:1})}<span style="font-size:15px;font-weight:600"> /month</span></div><div class="s">${x.n} in 6 months</div></div><div class="tile"><div class="k">Average purchase</div><div class="v">${money(x.ticket)}</div><div class="s">Biggest ${money0(effSpend(x.biggest))}</div></div></div>`;
+    const places = Object.entries(x.places).sort((a, b) => b[1].v - a[1].v).slice(0, 6);
+    h += `<div class="sh"><span>Where</span></div><div class="group">${places.map(([m, o]) => `<div class="row">${icoHTML(c)}<div class="body"><div class="tt"><div class="t1">${esc(m)}</div><div class="t2">${o.n}× · ${money(o.v / o.n)} on average</div></div><span class="amt">${money(o.v)}</span></div></div>`).join("")}</div>`;
+    // a concrete, data-based tip
+    const small = Object.values(x.places).reduce((a, o) => a + (o.v / o.n < 6 ? o.n : 0), 0);
+    let tip;
+    if (x.fixed) tip = `This is a fixed cost. Compare offers once a year: even 10% less would keep ${money0(x.avg * .1 * 12)} a year.`;
+    else if (small >= 8) tip = `${small} of these ${x.n} purchases were small (under €6). Skipping one in three would keep about ${money0(x.ticket * x.perMonthCount / 3 * 12)} a year.`;
+    else if (x.usual && x.cur > x.usual * 1.2) tip = `${esc(monthOnly(UI.statsMonth))} is above your usual ${money0(x.usual)}. A monthly limit warns you before it happens again.`;
+    else tip = `Spending 20% less here keeps ${money0(x.avg * .2 * 12)} a year.`;
+    h += `<div class="notice">${IC.spark}<div class="tt"><div class="t1">Tip</div><div class="t2">${tip}</div>${!x.fixed ? `<div class="acts"><button class="btn sm" data-a="setlimit" data-id="${c.id}" data-v="${Math.max(10, Math.round(x.avg * .9 / 10) * 10)}">${c.budget ? "Change limit to" : "Set a limit of"} ${money0(Math.max(10, Math.round(x.avg * .9 / 10) * 10))}/month</button></div>` : ""}</div></div>`;
+    return h + `</div>`;
   },
   subs() {
     const subs = subscriptions(), tot = subs.reduce((s, x) => s + x.amount, 0);
@@ -2129,6 +2207,7 @@ document.addEventListener("click", e => {
     saveslip() { saveSlip(top); },
     slip() { openSlip(id); },
     delslip() { actionSheet({message:"Delete this payslip? Its salary entry is removed too, unless it came from your bank statement.", actions:[{label:"Delete payslip", destructive:true, fn() { const s = S.payslips.find(p => p.id === id); S.payslips = S.payslips.filter(p => p.id !== id); const t = allTx().find(x => x.slip === id && x.source === "payslip"); if (t) removeTx(t.id); S.imports = S.imports.filter(i => !(i.kind === "payslip" && s && i.period === s.period)); markMeta(); closeSheet(top); render(); }}]}); },
+    setlimit() { const c = catById(id); if (!c) return; c.budget = +v; markMeta(); render(); toast(`${c.name}: limit ${money0(+v)} a month`); },
     weblookup() { S.settings.webLookup = S.settings.webLookup === false; markMeta(); render(); if (S.settings.webLookup) { looked.clear(); lookupUnknown(); } },
     newcat() { openCat(null); },
     newcatq() { const t = findTx(id); if (t) openCat(null, cid => answerOut(id, () => setCategory(t, cid))); },

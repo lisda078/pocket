@@ -46,14 +46,15 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;margin:0}
-body{background:#000;color:var(--label);font-family:var(--font);font-size:17px;line-height:22px;letter-spacing:-.41px;-webkit-font-smoothing:antialiased;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-text-size-adjust:100%}
+html,body{height:100%;margin:0;background:var(--bg)}
+@media all and (display-mode: standalone){html,body{height:100vh}}
+body{color:var(--label);font-family:var(--font);font-size:17px;line-height:22px;letter-spacing:-.41px;-webkit-font-smoothing:antialiased;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-text-size-adjust:100%}
 input,textarea{-webkit-user-select:text;user-select:text}
 button{font-family:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--tint);outline-offset:2px}
 .num{font-variant-numeric:tabular-nums}
 
-#app{position:fixed;inset:0;background:var(--bg);overflow:hidden;transform-origin:50% 0;transition:transform .5s var(--ease),border-radius .5s var(--ease),filter .5s}
+#app{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);overflow:hidden;transform-origin:50% 0;transition:transform .5s var(--ease),border-radius .5s var(--ease),filter .5s}
 #app.behind{transform:translateY(calc(env(safe-area-inset-top) + 8px)) scale(.92);border-radius:12px;filter:brightness(.85)}
 .view{position:absolute;inset:0;display:none}
 .view.on{display:block}
@@ -354,6 +355,11 @@ button.tile:active{background:var(--fill2)}
 .composer button{width:38px;height:38px}
 .avatar{box-shadow:inset 0 1px 1px rgba(255,255,255,.4),0 4px 12px rgba(0,0,0,.15)}
 .loading{background:var(--bg)}
+@media all and (display-mode: standalone){#app{bottom:auto;height:100vh}}
+body.sheeted{background:#000}
+.nav-in{height:46px}
+.nav .nb,.sheet-nav .nb{height:40px;min-width:40px;border-radius:20px}
+.nav .nb.ic,.sheet-nav .nb.ic{width:40px}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}
 }
@@ -607,7 +613,7 @@ function prettyMerchant(raw) {
     .replace(/\b(DEBIT\s+TPV|DEBIT|TPV|PAIEMENT|PAIEM|PAIEMT|CB|CARTE|ACHAT|VISA|POS|PRLV|SEPA|VIR(EMENT)?(\s+INSTANTANE)?|INST|RETRAIT|DAB|CONTACTLESS|MAESTRO|VPAY|BANCONTACT|FACTURE|REMBOURSEMENT\s+TPV)\b/gi, " ")
     .replace(/S-NET\s*:\s*[\d-]+/gi, " ").replace(/\b(SUMUP|MGP|MOL|SQ|NYX|PADDLE\.NET)\s*\*\s*/gi, "").replace(/[X*]{2,}\d*/gi, " ").replace(/\*\s?(?=[A-Z0-9]*\d)[A-Z0-9]{6,}/g, " ").replace(/\*/g, " ")
     .replace(/\d{2}[\/.]\d{2}([\/.]\d{2,4})?\b/g, " ").replace(/\b\d{3,}\b/g, " ").replace(/\b[A-Z]{2}\d{4,}\b/g, " ")
-    .replace(/\s+/g, " ").trim();
+    .replace(/DISTRIBUTION\b/gi, "").replace(/\s+/g, " ").trim();
   if (!t) t = (raw || "").trim();
   t = t.toLowerCase().replace(/(^|[\s\-\/&(.*])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
   return t.slice(0, 42);
@@ -1260,6 +1266,7 @@ function renderHome() {
   h += safe ? `<div class="tile"><div class="k">Safe to spend</div><div class="v ${safe.perDay < 0 ? "neg" : ""}">${money0(safe.perDay)}<span style="font-size:15px;font-weight:600"> /day</span></div><div class="s">${safe.days} days until payday${safe.upcoming ? ", after " + money0(safe.upcoming) + " of bills" : ""}</div></div>` : `<div class="tile"><div class="k">Safe to spend</div><div class="v muted">–</div><div class="s">Shows up once your salary is in</div></div>`;
   h += `<button class="tile" data-a="tab" data-id="people"><div class="k">Friends owe you</div><div class="v ${owedToMe ? "pos" : ""}">${money0(owedToMe)}</div><div class="s">${S.people.filter(p => personBalance(p.id) > .009).length || "No"} open ${S.people.filter(p => personBalance(p.id) > .009).length === 1 ? "person" : "people"}</div></button></div>`;
   if (P.ai) h += `<button class="askbar" data-a="ask">${IC.spark}<span style="flex:1">Ask Pocket about your money…</span>${IC.chev}</button>`;
+  h += `<button class="askbar" data-a="insview" data-v="where"><span class="ico" style="--c:var(--tint)">📊</span><span style="flex:1;color:var(--label)">Where does my money go most?</span>${IC.chev}</button>`;
   if (rv.length) h += `<div class="sh"><span>Needs your answer</span></div><div class="group"><button class="row" data-a="reviews"><span class="ico solid" style="--c:var(--orange)">?</span><div class="body"><div class="tt"><div class="t1">${rv.length} question${rv.length > 1 ? "s" : ""}</div><div class="t2">Each answer teaches Pocket your habits</div></div><span class="badge">${rv.length}</span>${IC.chev}</div></button></div>`;
   if (byCat.length) {
     h += `<div class="sh"><span>Where it went</span><button data-a="tab" data-id="stats">Insights</button></div><div class="group">`;
@@ -1339,7 +1346,9 @@ function renderStats() {
   const months = rangeMonths(), list = months.flatMap(monthTx), spent = spendOf(list), income = incomeOf(list), byCat = catTotals(list);
   const label = UI.range === "month" ? monthLong(UI.statsMonth) : `${monthShort(months[0])} – ${monthLong(months[months.length - 1])}`;
   let h = navHTML("Insights") + `<div class="scroll"><h1 class="lt">Insights</h1>`;
-  h += seg("range", [["month", "Month"], ["6m", "6 Months"], ["year", "Year"]], UI.range, "range");
+  h += seg("insview", [["overview", "Overview"], ["where", "Where it goes"]], UI.insView || "overview", "insview");
+  if ((UI.insView || "overview") === "where") return h + `<div style="height:6px"></div>` + renderWhere() + `</div>`;
+  h += `<div style="height:10px"></div>` + seg("range", [["month", "Month"], ["6m", "6 Months"], ["year", "Year"]], UI.range, "range");
   h += `<div class="monthbar" style="margin-top:8px"><button class="nb" data-a="smonth" data-d="-1" aria-label="Earlier">${IC.back}</button><span class="m" style="font-size:15px">${esc(label)}</span><button class="nb" data-a="smonth" data-d="1" aria-label="Later" ${UI.statsMonth >= ymOf(todayISO()) ? "disabled" : ""} style="transform:scaleX(-1)">${IC.back}</button></div>`;
   const rate = income > 0 ? Math.round((income - spent) / income * 100) : null;
   const days = months.reduce((s, k) => s + (k === ymOf(todayISO()) ? new Date().getDate() : daysInMonth(k)), 0);
@@ -1353,7 +1362,18 @@ function renderStats() {
   } else h += `<div class="group"><div class="empty">No spending in this period yet.</div></div>`;
   const trendM = Array.from({length:6}, (_, i) => addMonths(UI.statsMonth, i - 5));
   h += `<div class="sh"><span>Money in and out, last 6 months</span></div><div class="chart">${barsSVG(trendM)}<div class="legend" style="margin-top:6px"><span><i class="dot" style="--c:${pc(1)}"></i>Money out</span><span><i class="dot" style="--c:${pc(0)}"></i>Money in</span></div><div class="tip"></div></div>`;
+  h += `<button class="askbar" data-a="insview" data-v="where" style="margin-top:14px">${IC.spark}<span style="flex:1;color:var(--label)">Where does my money go most?</span>${IC.chev}</button>`;
+  const merch = {}; for (const t of list.filter(isSpend)) { const k = t.merchant; merch[k] ||= {v:0, n:0, cat:t.cat}; merch[k].v += effSpend(t); merch[k].n++; }
+  const top = Object.entries(merch).sort((a, b) => b[1].v - a[1].v).slice(0, 6);
+  const freq = Object.entries(merch).sort((a, b) => b[1].n - a[1].n)[0];
+  if (top.length) h += `<div class="sh"><span>Top places</span></div><div class="group">${top.map(([m, o]) => `<div class="row">${icoHTML(catById(o.cat))}<div class="body"><div class="tt"><div class="t1">${esc(m)}</div><div class="t2">${o.n} visit${o.n > 1 ? "s" : ""} · ${money(o.v / o.n)} each</div></div><span class="amt">${money(o.v)}</span></div></div>`).join("")}</div>`;
+  if (freq && freq[1].n >= 4) h += `<div class="sf">You went to ${esc(freq[0])} ${freq[1].n} times in this period, ${money(freq[1].v)} in total.</div>`;
+  return h + `</div>`;
+}
+function renderWhere() {
+  let h = `<div class="monthbar" style="margin-top:8px"><button class="nb" data-a="smonth" data-d="-1" aria-label="Earlier">${IC.back}</button><span class="m" style="font-size:15px">6 months to ${esc(monthLong(UI.statsMonth))}</span><button class="nb" data-a="smonth" data-d="1" aria-label="Later" ${UI.statsMonth >= ymOf(todayISO()) ? "disabled" : ""} style="transform:scaleX(-1)">${IC.back}</button></div>`;
   const cs = catStats(UI.statsMonth);
+  if (!cs.list.length) return h + `<div class="empty"><b>Nothing to rank yet</b>Upload a few months of statements and Pocket shows where your money goes most.</div>`;
   if (cs.list.length) {
     const top = cs.list[0].avg || 1, totalAvg = cs.list.reduce((a, x) => a + x.avg, 0) || 1;
     h += `<div class="sh"><span>Where your money goes most</span><span style="text-transform:none">per month</span></div><div class="group">${cs.list.slice(0, 10).map((x, i) => `<button class="row" data-a="page" data-id="catdetail" data-x="${x.id}"><span class="num muted" style="width:16px;text-align:right;font-size:15px">${i + 1}</span>${icoHTML(x.c)}<div class="body"><div class="tt"><div class="t1">${esc(x.c.name)}</div><div class="bar"><i style="--c:${catCol(x.c)};width:${x.avg / top * 100}%"></i></div><div class="t2" style="margin-top:3px;font-size:13px">${Math.round(x.avg / totalAvg * 100)}% · ${x.perMonthCount >= 1 ? Math.round(x.perMonthCount) + "×/month" : "now and then"}</div></div><div class="amt">${money0(x.avg)}<small>${trendPill(x) || "&nbsp;"}</small></div>${IC.chev}</div></button>`).join("")}</div>`;
@@ -1364,12 +1384,9 @@ function renderStats() {
       h += `<div class="group" style="margin-top:10px">${flex.slice(0, 3).map(x => { const cut = r2(x.avg * .2); return `<button class="row" data-a="page" data-id="catdetail" data-x="${x.id}">${icoHTML(x.c)}<div class="body"><div class="tt"><div class="t1">${esc(x.c.name)}: spend 20% less</div><div class="t2">and keep <b style="color:var(--pos)">${money0(cut * 12)} a year</b> (${money0(cut)} a month)</div></div>${IC.chev}</div></button>`; }).join("")}</div>`;
     }
   }
-  const merch = {}; for (const t of list.filter(isSpend)) { const k = t.merchant; merch[k] ||= {v:0, n:0, cat:t.cat}; merch[k].v += effSpend(t); merch[k].n++; }
-  const top = Object.entries(merch).sort((a, b) => b[1].v - a[1].v).slice(0, 6);
-  const freq = Object.entries(merch).sort((a, b) => b[1].n - a[1].n)[0];
-  if (top.length) h += `<div class="sh"><span>Top places</span></div><div class="group">${top.map(([m, o]) => `<div class="row">${icoHTML(catById(o.cat))}<div class="body"><div class="tt"><div class="t1">${esc(m)}</div><div class="t2">${o.n} visit${o.n > 1 ? "s" : ""} · ${money(o.v / o.n)} each</div></div><span class="amt">${money(o.v)}</span></div></div>`).join("")}</div>`;
-  if (freq && freq[1].n >= 4) h += `<div class="sf">You went to ${esc(freq[0])} ${freq[1].n} times in this period, ${money(freq[1].v)} in total.</div>`;
-  return h + `</div>`;
+  const subs = subscriptions();
+  if (subs.length) h += `<div class="sh"><span>Repeating every month</span></div><div class="group"><button class="row" data-a="page" data-id="subs"><span class="ico" style="--c:${catCol(catById("bills"))}">↻</span><div class="body"><div class="tt"><div class="t1">${subs.length} subscriptions</div><div class="t2">${money0(subs.reduce((a, x) => a + x.amount, 0) * 12)} a year</div></div><span class="amt">${money0(subs.reduce((a, x) => a + x.amount, 0))}<small>a month</small></span>${IC.chev}</div></button></div>`;
+  return h;
 }
 function arc(cx, cy, r, a0, a1) {
   const p = a => [cx + r * Math.cos(a), cy + r * Math.sin(a)]; const [x0, y0] = p(a0), [x1, y1] = p(a1);
@@ -1639,7 +1656,7 @@ function openSheet(build, {short = false, onClose} = {}) {
   sheets.push(sh); sh.rerender(false);
   $(".sheet-bd", wrap).addEventListener("click", () => closeSheet(sh));
   bindSheetDrag(sh);
-  if (sheets.length === 1) $("#app").classList.add("behind");
+  if (sheets.length === 1) { $("#app").classList.add("behind"); document.body.classList.add("sheeted"); }
   requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("in")));
   return sh;
 }
@@ -1647,7 +1664,7 @@ function closeSheet(sh = sheets[sheets.length - 1]) {
   if (!sh) return;
   const i = sheets.indexOf(sh); if (i >= 0) sheets.splice(i, 1);
   sh.wrap.classList.remove("in"); $(".sheet", sh.wrap).style.transform = "";
-  if (!sheets.length) $("#app").classList.remove("behind");
+  if (!sheets.length) { $("#app").classList.remove("behind"); setTimeout(() => { if (!sheets.length) document.body.classList.remove("sheeted"); }, 480); }
   setTimeout(() => sh.wrap.remove(), 480);
   sh.onClose && sh.onClose();
 }
@@ -2164,6 +2181,7 @@ document.addEventListener("click", e => {
     facc() { UI.facc = id; render(); },
     filtercat() { UI.month = UI.tab === "stats" && UI.range === "month" ? UI.statsMonth : ymOf(todayISO()); UI.prevTab = UI.tab; UI.tab = "activity"; UI.fcat = id; UI.facc = "all"; UI.q = ""; UI.scroll.activity = 0; render(); },
     range() { UI.range = v; render(); },
+    insview() { UI.insView = v; if (UI.tab !== "stats") { UI.prevTab = UI.tab; UI.tab = "stats"; } UI.scroll.stats = 0; render(); },
     reviews() { openReviews(); },
     ask() { openAsk(); },
     askq() { askSend(top, v); },

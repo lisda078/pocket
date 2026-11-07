@@ -1304,6 +1304,7 @@ function renderActivity() {
     h += `<div class="sh"><span>${esc(dayLabel(d))}</span><span class="num">${out ? "−" + money(out) : ""}</span></div><div class="group">${byDay[d].map(t => txRow(t)).join("")}</div>`;
   }
   if (list.length) h += `<div class="sf" style="text-align:center;padding-top:14px">Swipe left on a row to delete it.</div>`;
+  if (monthTx(k).length) h += `<div class="group" style="margin-top:22px"><button class="row" data-a="delmonth"><div class="body" style="justify-content:center"><span style="color:var(--red)">Delete all of ${esc(monthOnly(k))}</span></div></button></div>`;
   return h + `</div>`;
 }
 
@@ -2174,6 +2175,7 @@ document.addEventListener("click", e => {
     import() { openImport(el.dataset.kind || "statement"); },
     close() { closeSheet(top); },
     tx() { openTx(id); },
+    delmonth() { const k = UI.month, items = monthTx(k).slice(); if (!items.length) return; actionSheet({message:`Delete all ${items.length} transaction${items.length === 1 ? "" : "s"} from ${monthLong(k)}? This can't be undone.`, actions:[{label:"Delete all of " + monthOnly(k), destructive:true, fn() { const ids = new Set(items.map(t => t.id)); for (const t of items) if (t.loan) { const l = S.loans.find(x => x.id === t.loan); if (l) unpayLoan(l, t.id); } delete S.tx[k]; markMonth(k); for (const o of allTx()) if (o.review?.with && ids.has(o.review.with)) { delete o.review; touch(o); } S.imports = S.imports.filter(i => !(i.kind === "statement" && i.period === k)); for (const b in S.balances) delete S.balances[b][k]; markMeta(); refreshAll(); toast("Month deleted"); }}]}); },
     deltx() { const t = findTx(id); if (!t) return; actionSheet({message:`Delete ${t.merchant} (${money(t.amount)})?`, actions:[{label:"Delete transaction", destructive:true, fn() { if (t.loan) { const l = S.loans.find(x => x.id === t.loan); if (l) unpayLoan(l, t.id); } removeTx(id); for (const o of allTx()) if (o.review?.with === id) { delete o.review; touch(o); } if (top && top.txId === id) closeSheet(top); refreshAll(); toast("Deleted"); }}]}); },
     month() { UI.month = addMonths(UI.month, +el.dataset.d); render(); },
     smonth() { UI.statsMonth = addMonths(UI.statsMonth, +el.dataset.d * (UI.range === "year" ? 12 : UI.range === "6m" ? 6 : 1)); if (UI.statsMonth > ymOf(todayISO())) UI.statsMonth = ymOf(todayISO()); render(); },

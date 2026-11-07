@@ -404,6 +404,7 @@ const monthOnly = k => parseISO(k + "-01").toLocaleDateString(undefined, {month:
 const monthShort = k => parseISO(k + "-01").toLocaleDateString(undefined, {month:"short"});
 const dayLabel = s => { const d = dayDiff(s, todayISO()); if (d === 0) return "Today"; if (d === 1) return "Yesterday"; return parseISO(s).toLocaleDateString(undefined, {weekday:"long", day:"numeric", month:"long"}); };
 const shortDate = s => parseISO(s).toLocaleDateString(undefined, {day:"numeric", month:"short"});
+const yearDate = s => parseISO(s).toLocaleDateString(undefined, {day:"numeric", month:"short", year:"numeric"});
 const longDate = s => parseISO(s).toLocaleDateString(undefined, {day:"numeric", month:"long", year:"numeric"});
 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const std = a => { if (a.length < 2) return 0; const m = avg(a); return Math.sqrt(avg(a.map(v => (v - m) ** 2))); };
@@ -502,7 +503,7 @@ function freshState() {
 let S = freshState();
 let DEMO = false;
 const P = {ai:false, mode:"local", col:null, dirty:new Set(), timer:null, chain:Promise.resolve(), name:"", failed:false};
-const UI = {tab:"home", prevTab:"home", month:ymOf(todayISO()), q:"", fcat:"all", facc:"all", range:"month", statsMonth:ymOf(todayISO()), pages:{}, scroll:{}, seg:{}, chat:[]};
+const UI = {tab:"home", prevTab:"home", month:ymOf(todayISO()), q:"", fcat:"all", facc:"all", sort:"new", scope:"month", ftype:"all", range:"month", statsMonth:ymOf(todayISO()), pages:{}, scroll:{}, seg:{}, chat:[]};
 
 const allTx = () => Object.values(S.tx).flat();
 const monthTx = k => S.tx[k] || [];
@@ -1220,7 +1221,7 @@ function seg(key, opts, cur, action) {
 }
 function txRow(t, {swipe = true, showDate = false} = {}) {
   const c = catById(effCat(t));
-  const sub = [showDate ? shortDate(t.date) : (c?.name || "Other"), viaHome(t) ? "via " + t.peer : t.peer && t.cat === "transfer" ? "to " + t.peer : "", t.split ? `split ${t.split.shares.length + (t.split.mine > 0 ? 1 : 0)} ways` : t.account].filter(Boolean).join(" · ");
+  const sub = [showDate === "year" ? yearDate(t.date) : showDate ? shortDate(t.date) : (c?.name || "Other"), viaHome(t) ? "via " + t.peer : t.peer && t.cat === "transfer" ? "to " + t.peer : "", t.split ? `split ${t.split.shares.length + (t.split.mine > 0 ? 1 : 0)} ways` : t.account].filter(Boolean).join(" · ");
   const flag = t.review ? `<span class="pill warn">${t.review.t === "match" ? "Same?" : t.review.t === "repay" ? "Paid back?" : t.review.t === "iban" ? "Your account?" : "Check"}</span>` : (t.source === "manual" && !t.matched ? `<span class="pill">Added</span>` : "");
   const amt = t.split ? `<div class="amt">${money(t.amount)}<small>you ${money(-t.split.mine)}</small></div>` : `<div class="amt ${t.amount > 0 ? "pos" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</div>`;
   const row = `<div class="row tap" data-a="tx" data-id="${t.id}">${icoHTML(c, "lg")}<div class="body"><div class="tt"><div class="t1">${esc(t.merchant)}</div><div class="t2">${esc(sub)}</div></div>${flag}${amt}</div></div>`;
@@ -1283,28 +1284,61 @@ function renderHome() {
 }
 
 /* ================= Activity ================= */
-function renderActivity() {
-  const k = UI.month; let list = monthTx(k).slice();
+const SORTS = [["new", "Newest"], ["old", "Oldest"], ["big", "Biggest"], ["small", "Smallest"], ["az", "Name A–Z"], ["names", "Totals by name"]];
+function activityList() {
+  const all = UI.scope === "all", k = UI.month;
+  let list = (all ? allTx() : monthTx(k)).slice();
   const q = UI.q.trim().toLowerCase();
-  if (q) list = list.filter(t => (t.merchant + " " + (t.raw || "") + " " + (t.note || "") + " " + (catById(t.cat)?.name || "")).toLowerCase().includes(q));
+  if (q) {
+    const qn = q.replace(",", ".").replace(/[€\s+−-]/g, "");
+    const isNum = /^\d+(\.\d+)?$/.test(qn);
+    list = list.filter(t => {
+      if ((t.merchant + " " + (t.raw || "") + " " + (t.note || "") + " " + (catById(t.cat)?.name || "") + " " + (t.peer || "") + " " + (t.account || "")).toLowerCase().includes(q)) return true;
+      if (isNum) { const a = Math.abs(t.amount).toFixed(2); return a.startsWith(qn) || a === (+qn).toFixed(2); }
+      return false;
+    });
+  }
   if (UI.fcat !== "all") list = list.filter(t => UI.fcat === "review" ? t.review : UI.fcat === "split" ? t.split : t.cat === UI.fcat);
   if (UI.facc !== "all") list = list.filter(t => t.account === UI.facc);
-  list.sort((a, b) => b.date.localeCompare(a.date));
-  const byDay = {}; for (const t of list) (byDay[t.date] ||= []).push(t);
-  const used = new Set(monthTx(k).map(t => t.cat)), cats = S.categories.filter(c => used.has(c.id));
+  if (UI.ftype === "out") list = list.filter(t => t.amount < 0); else if (UI.ftype === "in") list = list.filter(t => t.amount > 0);
+  const by = {new:(a, b) => b.date.localeCompare(a.date), old:(a, b) => a.date.localeCompare(b.date), big:(a, b) => Math.abs(b.amount) - Math.abs(a.amount), small:(a, b) => Math.abs(a.amount) - Math.abs(b.amount), az:(a, b) => a.merchant.localeCompare(b.merchant, undefined, {sensitivity:"base"}) || b.date.localeCompare(a.date)};
+  list.sort(by[UI.sort] || by.new);
+  return list;
+}
+function renderActivity() {
+  const k = UI.month, all = UI.scope === "all", list = activityList();
+  const q = UI.q.trim(), base = all ? allTx() : monthTx(k);
+  const used = new Set(base.map(t => t.cat)), cats = S.categories.filter(c => used.has(c.id));
+  const chip = (a, id, on, label) => `<button class="chip ${on ? "on" : ""}" data-a="${a}" data-id="${esc(id)}">${label}</button>`;
   let h = navHTML("Activity", {right:`<button class="nb ic" data-a="import" aria-label="Upload a PDF">${IC.doc}</button>`}) + `<div class="scroll"><h1 class="lt">Activity</h1>`;
-  h += `<label class="search">${IC.search}<input id="q" type="search" placeholder="Search" value="${esc(UI.q)}" autocomplete="off" aria-label="Search transactions"></label>`;
-  h += `<div class="monthbar"><button class="nb" data-a="month" data-d="-1" aria-label="Previous month">${IC.back}</button><span class="m">${esc(monthLong(k))}</span><button class="nb" data-a="month" data-d="1" aria-label="Next month" ${k >= ymOf(todayISO()) ? "disabled" : ""} style="transform:scaleX(-1)">${IC.back}</button></div>`;
-  h += `<div class="chips"><button class="chip ${UI.fcat === "all" ? "on" : ""}" data-a="fcat" data-id="all">All</button>${reviews().length ? `<button class="chip ${UI.fcat === "review" ? "on" : ""}" data-a="fcat" data-id="review">To check</button>` : ""}${monthTx(k).some(t => t.split) ? `<button class="chip ${UI.fcat === "split" ? "on" : ""}" data-a="fcat" data-id="split">Split</button>` : ""}${cats.map(c => `<button class="chip ${UI.fcat === c.id ? "on" : ""}" data-a="fcat" data-id="${c.id}"><span>${esc(c.emoji)}</span>${esc(c.name)}</button>`).join("")}</div>`;
-  h += `<div class="chips">${["all", ...S.accounts].map(a => `<button class="chip ${UI.facc === a ? "on" : ""}" data-a="facc" data-id="${esc(a)}">${a === "all" ? "All accounts" : esc(a)}</button>`).join("")}</div>`;
+  h += `<label class="search">${IC.search}<input id="q" type="search" placeholder="Search name, note or amount" value="${esc(UI.q)}" autocomplete="off" aria-label="Search transactions"></label>`;
+  h += `<div class="chips">${chip("fscope", "month", !all, "One month")}${chip("fscope", "all", all, "All time")}<span style="flex:none;width:1px;background:var(--sep);margin:6px 2px"></span>${chip("ftype", "all", UI.ftype === "all", "In & out")}${chip("ftype", "out", UI.ftype === "out", "Money out")}${chip("ftype", "in", UI.ftype === "in", "Money in")}</div>`;
+  if (!all) h += `<div class="monthbar"><button class="nb" data-a="month" data-d="-1" aria-label="Previous month">${IC.back}</button><span class="m">${esc(monthLong(k))}</span><button class="nb" data-a="month" data-d="1" aria-label="Next month" ${k >= ymOf(todayISO()) ? "disabled" : ""} style="transform:scaleX(-1)">${IC.back}</button></div>`;
+  h += `<div class="sh" style="padding-top:6px"><span>Sort</span></div><div class="chips">${SORTS.map(([id, label]) => chip("fsort", id, UI.sort === id, label)).join("")}</div>`;
+  h += `<div class="sh" style="padding-top:6px"><span>Filter</span>${UI.fcat !== "all" || UI.facc !== "all" || UI.ftype !== "all" || q ? `<button data-a="freset">Clear</button>` : ""}</div>`;
+  h += `<div class="chips"><button class="chip ${UI.fcat === "all" ? "on" : ""}" data-a="fcat" data-id="all">All</button>${reviews().length ? chip("fcat", "review", UI.fcat === "review", "To check") : ""}${base.some(t => t.split) ? chip("fcat", "split", UI.fcat === "split", "Split") : ""}${cats.map(c => `<button class="chip ${UI.fcat === c.id ? "on" : ""}" data-a="fcat" data-id="${c.id}"><span>${c.emoji}</span>${esc(c.name)}</button>`).join("")}</div>`;
+  h += `<div class="chips">${["all", ...S.accounts].map(a => chip("facc", a, UI.facc === a, a === "all" ? "All accounts" : esc(a))).join("")}</div>`;
   h += `<div class="tiles" style="margin-top:0"><div class="tile"><div class="k">Money out</div><div class="v">${money(spendOf(list))}</div></div><div class="tile"><div class="k">Money in</div><div class="v pos">${money(incomeOf(list))}</div></div></div>`;
-  if (!list.length) h += `<div class="empty"><b>Nothing here</b>${q || UI.fcat !== "all" || UI.facc !== "all" ? "No transactions match this filter." : "No transactions in " + esc(monthOnly(k)) + " yet."}</div>`;
-  for (const d of Object.keys(byDay)) {
-    const out = spendOf(byDay[d]);
-    h += `<div class="sh"><span>${esc(dayLabel(d))}</span><span class="num">${out ? "−" + money(out) : ""}</span></div><div class="group">${byDay[d].map(t => txRow(t)).join("")}</div>`;
+  if (!list.length) return h + `<div class="empty"><b>Nothing here</b>${q || UI.fcat !== "all" || UI.facc !== "all" || UI.ftype !== "all" ? "No transactions match this filter." : all ? "No transactions yet." : "No transactions in " + esc(monthOnly(k)) + " yet."}</div></div>`;
+  h += `<div class="sf" style="padding-top:0">${list.length} transaction${list.length === 1 ? "" : "s"}</div>`;
+  const dateMode = all ? "year" : true;
+  if (UI.sort === "names") {
+    const g = {};
+    for (const t of list) { const x = g[t.merchant] ||= {name:t.merchant, cat:effCat(t), n:0, total:0}; x.n++; x.total = r2(x.total + t.amount); }
+    const rows = Object.values(g).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    h += `<div class="group">${rows.map(x => `<button class="row tap" data-a="fname" data-id="${esc(x.name)}">${icoHTML(catById(x.cat), "lg")}<div class="body"><div class="tt"><div class="t1">${esc(x.name)}</div><div class="t2">${x.n} time${x.n === 1 ? "" : "s"} · ${esc(catById(x.cat)?.name || "Other")}</div></div><div class="amt ${x.total > 0 ? "pos" : ""}">${x.total > 0 ? "+" : ""}${money(x.total)}</div></div></button>`).join("")}</div>`;
+    h += `<div class="sf" style="text-align:center;padding-top:14px">Tap a name to see each payment.</div>`;
+  } else if (UI.sort === "new" || UI.sort === "old") {
+    const byDay = {}; for (const t of list) (byDay[t.date] ||= []).push(t);
+    for (const d of Object.keys(byDay)) {
+      const out = spendOf(byDay[d]);
+      h += `<div class="sh"><span>${esc(all && ymOf(d) !== ymOf(todayISO()) ? longDate(d) : dayLabel(d))}</span><span class="num">${out ? "−" + money(out) : ""}</span></div><div class="group">${byDay[d].map(t => txRow(t)).join("")}</div>`;
+    }
+  } else {
+    h += `<div class="group">${list.map(t => txRow(t, {showDate:dateMode})).join("")}</div>`;
   }
-  if (list.length) h += `<div class="sf" style="text-align:center;padding-top:14px">Swipe left on a row to delete it.</div>`;
-  if (monthTx(k).length) h += `<div class="group" style="margin-top:22px"><button class="row" data-a="delmonth"><div class="body" style="justify-content:center"><span style="color:var(--red)">Delete all of ${esc(monthOnly(k))}</span></div></button></div>`;
+  if (UI.sort !== "names") h += `<div class="sf" style="text-align:center;padding-top:14px">Swipe left on a row to delete it.</div>`;
+  if (!all && monthTx(k).length) h += `<div class="group" style="margin-top:22px"><button class="row" data-a="delmonth"><div class="body" style="justify-content:center"><span style="color:var(--red)">Delete all of ${esc(monthOnly(k))}</span></div></button></div>`;
   return h + `</div>`;
 }
 
@@ -2181,6 +2215,11 @@ document.addEventListener("click", e => {
     smonth() { UI.statsMonth = addMonths(UI.statsMonth, +el.dataset.d * (UI.range === "year" ? 12 : UI.range === "6m" ? 6 : 1)); if (UI.statsMonth > ymOf(todayISO())) UI.statsMonth = ymOf(todayISO()); render(); },
     fcat() { UI.fcat = id; render(); },
     facc() { UI.facc = id; render(); },
+    fsort() { UI.sort = id; render(); },
+    fscope() { UI.scope = id; render(); },
+    ftype() { UI.ftype = id; render(); },
+    fname() { UI.q = id; UI.sort = "new"; render(); },
+    freset() { UI.q = ""; UI.fcat = "all"; UI.facc = "all"; UI.ftype = "all"; render(); },
     filtercat() { UI.month = UI.tab === "stats" && UI.range === "month" ? UI.statsMonth : ymOf(todayISO()); UI.prevTab = UI.tab; UI.tab = "activity"; UI.fcat = id; UI.facc = "all"; UI.q = ""; UI.scroll.activity = 0; render(); },
     range() { UI.range = v; render(); },
     insview() { UI.insView = v; if (UI.tab !== "stats") { UI.prevTab = UI.tab; UI.tab = "stats"; } UI.scroll.stats = 0; render(); },

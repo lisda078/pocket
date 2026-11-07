@@ -463,7 +463,7 @@ const catsFor = amount => amount > 0 ? S.categories.filter(c => c.kind || c.id =
 /* ================= state ================= */
 function freshState() {
   return {v:2, categories:clone(DEFAULT_CATS), accounts:["BCEE","Crédit Agricole","Cash"], acctType:{BCEE:"current","Crédit Agricole":"current",Cash:"cash"}, balances:{},
-    acctIban:{}, tx:{}, payslips:[], model:{m:{}, t:{}}, imports:[], people:[], ious:[], loans:[], goals:[], settings:{payday:30, onboarded:false, holder:"", rulesV:0}};
+    acctIban:{}, acctRole:{}, tx:{}, payslips:[], model:{m:{}, t:{}}, imports:[], people:[], ious:[], loans:[], goals:[], settings:{payday:30, onboarded:false, holder:"", rulesV:0}};
 }
 let S = freshState();
 let DEMO = false;
@@ -481,7 +481,13 @@ function updateTx(t, patch) {
   markMonth(newK);
 }
 const touch = t => markMonth(ymOf(t.date));
-const kindOf = t => catById(t.cat)?.kind;
+const homeAccount = () => S.accounts.find(a => (S.acctRole || {})[a] === "home") || null;
+const hasStatement = (acc, k) => S.imports.some(i => i.kind === "statement" && i.bank === acc && i.period === k);
+// Money sent to the account that pays your home costs counts as Home spending,
+// until that account's own statement for the month is uploaded (then its real bills count instead).
+const viaHome = t => t.cat === "transfer" && t.amount < 0 && t.peer && t.peer === homeAccount() && t.account !== t.peer && !hasStatement(t.peer, ymOf(t.date));
+const effCat = t => viaHome(t) ? "housing" : t.cat;
+const kindOf = t => catById(effCat(t))?.kind;
 const isSpend = t => t.amount < 0 && !kindOf(t);
 const isIncome = t => t.amount > 0 && kindOf(t) !== "transfer";
 const effSpend = t => t.split ? r2(t.split.mine) : -t.amount; // your real share when a bill was split
@@ -557,6 +563,7 @@ function mkey(s) {
   const ib = (s || "").match(/IBAN\s*([A-Z]{2}[\d ]{10,})/i);
   if (ib) return "iban " + ib[1].replace(/\s/g, "").slice(-4);
   const tk = tokens(s);
+  if (/\b(PRLV|PRELEVEMENT|DOMICILIATION|ECHEANCE)\b/i.test(s || "")) return "debit " + tk.slice(0, 2).join(" "); // direct debits are bills, not shop visits
   if (tk.length && BRANDS().has(tk[0])) return tk[0]; // every Aral, Auchan, Lidl… shares what it learned
   return tk.slice(0, 2).join(" ") || "unknown";
 }
@@ -583,10 +590,11 @@ const KW = [
   ["transport", ["sncf","cfl","uber","bolt","parking","peage","autoroute","mobiliteit","garage","pneu","ctt","ionity","flixbus","luxair","ryanair","easyjet","taxi","indigo","sanef"]],
   ["dining", ["restaurant","resto","mcdonald","mcdonalds","burger","kfc","pizza","pizzeria","cafe","coffee","starbucks","deliveroo","wedely","sushi","brasserie","bistro","kebab","subway","quick","snack","foodora","ubereats","piri","dallmayr","dallmayrdistribution","vendingland","selecta","bar"]],
   ["fun", ["cinema","kinepolis","utopia","steam","playstation","nintendo","xbox","club","concert","ticket","tickets","rockhal","bowling","museum","musee","casino","festival","escape"]],
-  ["bills", ["post","tango","orange","proximus","enovos","sudenergie","creos","assurance","axa","foyer","lalux","baloise","abonnement","netflix","spotify","disney","youtube","youtubepremium","icloud","microsoft","adobe","sfr","bouygues","edf","engie","prime","canal","anthropic","openai","chatgptsubscr","claude","frais","apple","fullykiosk"]],
+  ["loan", ["echeance","pret","emprunt","credit immobilier","mensualite"]],
+  ["housing", ["loyer","rent","syndic","immo","bauhaus","hornbach","brico","hubo","leroy","castorama","veolia","suez","saur","eau","gaz","electricite","enovos","sudenergie","creos","engie","edf","ordures","teom","dechets","sidec","sicotral","habitation","pacifica","multirisque"]],
+  ["bills", ["post","tango","orange","proximus","assurance","axa","foyer","lalux","baloise","abonnement","netflix","spotify","disney","youtube","youtubepremium","icloud","microsoft","adobe","sfr","bouygues","prime","canal","anthropic","openai","chatgptsubscr","claude","frais","apple","fullykiosk"]],
   ["health", ["pharmacie","apotheke","pharmacy","dr","docteur","medecin","dentiste","dentist","hopital","hospital","cns","optic","optique","clinique","laboratoire","ketterthill","bionext","kine","gym","gymbros","fitness","basic-fit","basicfit"]],
   ["shopping", ["amazon","zalando","ikea","fnac","decathlon","zara","primark","mediamarkt","asos","shein","temu","action","hema","kiabi","jysk","sephora","douglas","ebay","aliexpress","aliexpresscom","inno","gifi","tedi","newyorker","celio","jules","hetm","vinted","logitech","urban","tom"]],
-  ["housing", ["loyer","rent","syndic","immo","bauhaus","hornbach","brico","hubo","leroy","castorama"]],
   ["income", ["salaire","salary","lohn","paie","remuneration","allocations","zukunftskeess","tresorerie","remboursement"]],
 ];
 // Last 4 digits of an IBAN written in a bank line, e.g. "VIREMENT IBAN XX00 … 1234" → "1234"
@@ -600,7 +608,7 @@ function holderMatch(raw) {
 }
 function ruleGuess(raw, amount, fuelOnly = false) {
   const joined = " " + tokens(raw).join(" ") + " ";
-  if (amount < 0 && FUEL.some(f => joined.includes(" " + f + " "))) return Math.abs(amount) < 12 ? {cat:"dining", conf:.55, why:"smallfuel", usual:"transport"} : {cat:"transport", conf:.8, why:"rule"};
+  if (amount < 0 && !/PRLV|PRELEVEMENT|ECHEANCE|ABONNEMENT/i.test(raw || "") && FUEL.some(f => joined.includes(" " + f + " "))) return Math.abs(amount) < 12 ? {cat:"dining", conf:.55, why:"smallfuel", usual:"transport"} : {cat:"transport", conf:.8, why:"rule"};
   if (fuelOnly) return null;
   for (const [cat, words] of KW) if (catById(cat) && words.some(w => joined.includes(" " + w + " "))) { if ((cat === "income") !== (amount > 0)) continue; return {cat, conf:.72, why:"rule"}; }
   return null;
@@ -609,7 +617,7 @@ function predict(raw, amount, hint) {
   const a = Math.abs(amount), x = Math.log(a + 1), key = mkey(raw), m = S.model.m[key];
   const own = ownAccountFor(raw);
   if (own) return {cat:"transfer", conf:.97, why:"own", key, peer:own};
-  if (/^\s*(VIR|VIREMENT)/i.test(raw || "") && holderMatch(raw)) return {cat:"transfer", conf:.9, why:"self", key};
+  if (/^\s*(VIR|VIREMENT)/i.test(raw || "") && holderMatch(raw)) return {cat:"transfer", conf:.9, why:"self", key, peer:homeAccount() || undefined};
   // money from a company or the state (salary, expense refunds, tax refund) is income
   if (amount > 0 && /PART DE/i.test(raw || "") && /\b(S\.?A\.?|SARL|S\.?A\.?R\.?L|PSF|GMBH|SE|ETAT|STATE|CNS|CAE|ADEM|ZUKUNFTSKEESS)\b/i.test(raw || "") && !m) return {cat:"income", conf:.8, why:"rule", key};
   if (m) {
@@ -636,6 +644,7 @@ function predict(raw, amount, hint) {
   }
   const tk = tokens(raw);
   const fuel = ruleGuess(raw, amount, true); if (fuel) return {...fuel, key};
+  if (/\b(PRLV|PRELEVEMENT|DOMICILIATION|ECHEANCE)\b/i.test(raw || "")) { const r = ruleGuess(raw, amount); if (r) return {...r, key}; }
   const tally = {}; let tsum = 0;
   for (const t of tk.slice(0, 3)) { const o = S.model.t[t]; if (o) for (const [c, n] of Object.entries(o)) if (catById(c)) { tally[c] = (tally[c] || 0) + n; tsum += n; } }
   if (tsum) { const [c, n] = Object.entries(tally).sort((p, q) => q[1] - p[1])[0]; const k = catById(c).kind; if ((amount > 0) === (k === "income") || k === "transfer") return {cat:c, conf:.45 + .3 * (n / tsum) * Math.min(1, tsum / 3), why:"similar", usual:c, key}; }
@@ -677,13 +686,14 @@ function recheckReviews() {
   }
   return n;
 }
-const RULES_V = 3;
+const RULES_V = 4;
 function resort() {
   let n = 0;
   for (const t of allTx()) {
     if (t.source !== "bank" || t.userSet || t.split || t.loan) continue;
     const own = ownAccountFor(t.raw);
     if (own) { if (t.cat !== "transfer" || t.peer !== own || t.review) { t.cat = "transfer"; t.peer = own; delete t.review; touch(t); n++; } continue; }
+    if (t.cat === "transfer" && !t.peer && /^\s*(VIR|VIREMENT)/i.test(t.raw || "") && holderMatch(t.raw) && homeAccount()) { t.peer = homeAccount(); touch(t); n++; continue; }
     if (t.review && t.review.t !== "cat" && t.review.t !== "iban") continue;
     const p = predict(learnText(t), t.amount);
     if (p.conf >= .7) { if (t.cat !== p.cat || t.review) { t.cat = p.cat; delete t.review; touch(t); n++; } }
@@ -1116,8 +1126,8 @@ function seg(key, opts, cur, action) {
   return `<div class="seg" data-key="${key}" role="tablist"><span class="thumb"></span>${opts.map(([v, l]) => `<button role="tab" class="${v === cur ? "on" : ""}" aria-selected="${v === cur}" data-a="${action}" data-v="${v}">${esc(l)}</button>`).join("")}</div>`;
 }
 function txRow(t, {swipe = true, showDate = false} = {}) {
-  const c = catById(t.cat);
-  const sub = [showDate ? shortDate(t.date) : (c?.name || "Other"), t.split ? `split ${t.split.shares.length + (t.split.mine > 0 ? 1 : 0)} ways` : t.account].filter(Boolean).join(" · ");
+  const c = catById(effCat(t));
+  const sub = [showDate ? shortDate(t.date) : (c?.name || "Other"), viaHome(t) ? "via " + t.peer : t.peer && t.cat === "transfer" ? "to " + t.peer : "", t.split ? `split ${t.split.shares.length + (t.split.mine > 0 ? 1 : 0)} ways` : t.account].filter(Boolean).join(" · ");
   const flag = t.review ? `<span class="pill warn">${t.review.t === "match" ? "Same?" : t.review.t === "repay" ? "Paid back?" : t.review.t === "iban" ? "Your account?" : "Check"}</span>` : (t.source === "manual" && !t.matched ? `<span class="pill">Added</span>` : "");
   const amt = t.split ? `<div class="amt">${money(t.amount)}<small>you ${money(-t.split.mine)}</small></div>` : `<div class="amt ${t.amount > 0 ? "pos" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</div>`;
   const row = `<div class="row tap" data-a="tx" data-id="${t.id}">${icoHTML(c, "lg")}<div class="body"><div class="tt"><div class="t1">${esc(t.merchant)}</div><div class="t2">${esc(sub)}</div></div>${flag}${amt}</div></div>`;
@@ -1125,7 +1135,7 @@ function txRow(t, {swipe = true, showDate = false} = {}) {
 }
 function catTotals(list) {
   const m = {};
-  for (const t of list) if (isSpend(t)) m[t.cat] = (m[t.cat] || 0) + effSpend(t);
+  for (const t of list) if (isSpend(t)) { const c = effCat(t); m[c] = (m[c] || 0) + effSpend(t); }
   return Object.entries(m).map(([id, v]) => ({c:catById(id) || catById("other"), v:r2(v)})).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
 }
 
@@ -1308,7 +1318,7 @@ function renderWealth() {
   } else if (!sav.length) h += `<div class="notice">${IC.spark}<div class="tt"><div class="t1">Track your savings</div><div class="t2">Add your savings account, then upload its statements. Pocket charts the balance and how much you put aside each month.</div><div class="acts"><button class="btn sm" data-a="newacc" data-type="savings">Add savings account</button></div></div></div>`;
   for (const a of sav) { const mv = savingsMoves(a); if (!mv.moves.length) continue;
     h += `<div class="sh"><span>In and out of ${esc(a)}</span></div><div class="group"><button class="row" data-a="page" data-id="savemoves" data-x="${esc(a)}"><span class="ico" style="--c:${pc(0)}">⇅</span><div class="body"><div class="tt"><div class="t1">${mv.net >= 0 ? "Put aside" : "Taken out"} ${money0(Math.abs(mv.net))} overall</div><div class="t2">${mv.openLeft > .009 ? money0(mv.openLeft) + " taken out, not put back yet" : mv.took ? "Everything you took out was put back" : "Only deposits so far"}</div></div>${IC.chev}</div></button></div>`; }
-  h += `<div class="sh"><span>Accounts</span><button data-a="newacc">Add</button></div><div class="group">${accs.map(x => `<button class="row" data-a="acct" data-id="${esc(x.a)}"><span class="ico" style="--c:${x.type === "savings" ? pc(0) : x.type === "cash" ? catCol(null) : pc(1)}">${x.type === "savings" ? "🐷" : x.type === "cash" ? "💵" : "🏦"}</span><div class="body"><div class="tt"><div class="t1">${esc(x.a)}</div><div class="t2">${x.type === "savings" ? "Savings" : x.type === "cash" ? "Cash" : "Current account"}${x.b ? " · " + esc(monthShort(x.b.k)) : " · tap to set balance"}</div></div><span class="amt">${x.b ? money(x.b.v) : "–"}</span>${IC.chev}</div></button>`).join("")}</div><div class="sf">Balances update by themselves from the "new balance" line of each statement you upload.</div>`;
+  h += `<div class="sh"><span>Accounts</span><button data-a="newacc">Add</button></div><div class="group">${accs.map(x => `<button class="row" data-a="acct" data-id="${esc(x.a)}"><span class="ico" style="--c:${x.type === "savings" ? pc(0) : x.type === "cash" ? catCol(null) : pc(1)}">${x.type === "savings" ? "🐷" : x.type === "cash" ? "💵" : "🏦"}</span><div class="body"><div class="tt"><div class="t1">${esc(x.a)}</div><div class="t2">${x.type === "savings" ? "Savings" : x.type === "cash" ? "Cash" : (S.acctRole || {})[x.a] === "home" ? "Pays the home costs" : "Current account"}${x.b ? " · " + esc(monthShort(x.b.k)) : " · tap to set balance"}</div></div><span class="amt">${x.b ? money(x.b.v) : "–"}</span>${IC.chev}</div></button>`).join("")}</div><div class="sf">Balances update by themselves from the "new balance" line of each statement you upload.</div>`;
   // goals
   h += `<div class="sh"><span>Goals</span><button data-a="newgoal">Add</button></div>`;
   if (S.goals.length) h += `<div class="group">${S.goals.map(g => { const s = goalSaved(g), p = g.target ? Math.min(1, s / g.target) : 0, mLeft = g.date ? Math.max(1, (parseISO(g.date).getFullYear() - new Date().getFullYear()) * 12 + parseISO(g.date).getMonth() - new Date().getMonth()) : null; return `<button class="row" data-a="goal" data-id="${g.id}"><span class="ico lg" style="--c:${pc(2)}">${esc(g.emoji || "🎯")}</span><div class="body"><div class="tt"><div class="t1">${esc(g.name)}</div><div class="bar"><i style="--c:${p >= 1 ? catCol(catById("income")) : pc(2)};width:${p * 100}%"></i></div><div class="t2" style="margin-top:3px">${money0(s)} of ${money0(g.target)}${mLeft && s < g.target ? ` · ${money0((g.target - s) / mLeft)}/month to make it` : p >= 1 ? " · reached 🎉" : ""}</div></div>${IC.chev}</div></button>`; }).join("")}</div>`;
@@ -1608,10 +1618,11 @@ function buildSplitPreview(sp, total) {
 function openTx(id) {
   const sh = openSheet(sh => {
     const t = findTx(id); if (!t) return sheetNav("", "", `<button class="nb b" data-a="close">Done</button>`);
-    const c = catById(t.cat);
+    const c = catById(effCat(t));
     const src = t.source === "payslip" ? "From your payslip" : t.source === "manual" ? (t.matched ? "Added by you, confirmed by bank" : "Added by you, waiting for the bank statement") : "From your " + (t.account || "bank") + " statement";
     let h = sheetNav("", cancelBtn, `<button class="nb b" data-a="close">Done</button>`) + `<div class="sheet-body"><div class="detail-h">${icoHTML(c)}<div class="a ${t.amount > 0 ? "pos" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</div><div class="m">${esc(t.merchant)}</div><div class="d">${esc(dayLabel(t.date))}</div></div>`;
     if (t.review) h += questionCard(t, true);
+    if (viaHome(t)) h += `<div class="sf" style="padding:0 32px 12px;text-align:center">Counted as Home because ${esc(t.peer)} pays your home costs. Once you upload ${esc(t.peer)}'s statement for ${esc(monthOnly(ymOf(t.date)))}, its real bills count instead.</div>`;
     if (t.amount < 0 && kindOf(t) !== "transfer") {
       if (t.split) {
         h += `<div class="sh"><span>Split ${t.split.shares.length + (t.split.mine > 0 ? 1 : 0)} ways</span><button data-a="txsplit" data-id="${t.id}">Edit</button></div><div class="group">`;
@@ -1821,14 +1832,17 @@ function openAccount(name, presetType) {
   const isNew = !name;
   const b = name ? latestBalance(name) : null;
   formSheet({title:isNew ? "New account" : name, save:isNew ? "Add" : "Save",
-    fields:[{id:"name", ph:"Name (e.g. Spuerkeess savings)", value:name || ""}, {id:"type", label:"Type", type:"select", value:name ? S.acctType[name] : (presetType || "current"), options:[["current", "Current account"], ["savings", "Savings"], ["cash", "Cash"]]}, {id:"bal", label:"Balance now", type:"num", ph:"0,00", value:b ? String(b.v).replace(".", ",") : ""}],
-    extra:`<div class="sf">Upload this account's statements and the balance updates by itself.</div>`,
+    fields:[{id:"name", ph:"Name (e.g. Spuerkeess savings)", value:name || ""}, {id:"type", label:"Type", type:"select", value:name ? S.acctType[name] : (presetType || "current"), options:[["current", "Current account"], ["savings", "Savings"], ["cash", "Cash"]]}, {id:"role", label:"Used for", type:"select", value:name && (S.acctRole || {})[name] === "home" ? "home" : "", options:[["", "Everyday"], ["home", "Home costs"]]}, {id:"bal", label:"Balance now", type:"num", ph:"0,00", value:b ? String(b.v).replace(".", ",") : ""}],
+    extra:`<div class="sf">Upload this account's statements and the balance updates by itself. Choose "Home costs" for the account that pays your home loan, water, gas, trash and insurance: what you send to it then counts as Home spending, until you upload its own statement.</div>`,
     del:!isNew && S.accounts.length > 1 ? {label:"Delete account", fn() { S.accounts = S.accounts.filter(x => x !== name); delete S.acctType[name]; delete S.balances[name]; markMeta(); }} : null,
     onSave(v) {
       const nn = v.name.trim(); if (!nn) return "Give the account a name.";
       if (isNew) { if (S.accounts.includes(nn)) return "That account already exists."; S.accounts.push(nn); }
       else if (nn !== name) { S.accounts[S.accounts.indexOf(name)] = nn; S.acctType[nn] = S.acctType[name]; delete S.acctType[name]; if (S.balances[name]) { S.balances[nn] = S.balances[name]; delete S.balances[name]; } for (const t of allTx()) if (t.account === name) { t.account = nn; touch(t); } }
       S.acctType[nn] = v.type;
+      S.acctRole ||= {}; for (const k of Object.keys(S.acctRole)) if (S.acctRole[k] === "home" && (k === name || (v.role === "home" && k !== nn))) delete S.acctRole[k];
+      if (v.role === "home") S.acctRole[nn] = "home"; else delete S.acctRole[nn];
+      resort();
       if (String(v.bal).trim() !== "") (S.balances[nn] ||= {})[ymOf(todayISO())] = r2(num(v.bal));
       markMeta();
     }});

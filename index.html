@@ -444,6 +444,7 @@ const DEFAULT_CATS = [
   {id:"shopping", name:"Shopping", emoji:"🛍️", col:PAL[3]},
   {id:"dining", name:"Eating out", emoji:"🍽️", col:PAL[4]},
   {id:"health", name:"Health & sport", emoji:"💊", col:PAL[5]},
+  {id:"barber", name:"Barber & hair", emoji:"💈", col:EXTRA[2]},
   {id:"bills", name:"Bills & subscriptions", emoji:"📄", col:PAL[6]},
   {id:"housing", name:"Home", emoji:"🏠", col:PAL[7]},
   {id:"loan", name:"Loan payments", emoji:"🏦", col:EXTRA[0]},
@@ -452,7 +453,34 @@ const DEFAULT_CATS = [
   {id:"payback", name:"Friends paying back", emoji:"🤝", col:GREEN, kind:"transfer"},
   {id:"income", name:"Income", emoji:"💶", col:GREEN, kind:"income"},
 ];
-const EMOJIS = ["☕","🍺","🎮","✈️","🐶","👶","🎓","💇","🏋️","🎁","🚬","📱","🧾","🚌","🅿️","🧺","🍔","🥖","💡","🧸","⚽","🎵","💄","🔧","🚗","🏖️","💍","🪴"];
+// Suggest an icon from a category name (English, French, German, Luxembourgish words).
+const ICON_WORDS = [
+  ["💈", "barber barbier coiffeur coiffure friseur hair haircut salon cheveux"], ["☕", "coffee cafe café kaffi kaffee espresso"], ["🥤", "drink drinks energy monster redbull boisson soda"],
+  ["🍺", "beer bar biere bière pub alcohol alcool drinks apero apéro wein wine vin"], ["🍔", "burger fastfood mcdo mcdonalds takeaway"], ["🍕", "pizza"], ["🥖", "bakery boulangerie bread pain"],
+  ["🏋️", "gym sport fitness training muscu musculation workout"], ["⚽", "football foot soccer club"], ["🐶", "dog chien hund pet pets animal animaux chat cat katze"],
+  ["👶", "baby bebe bébé kids kid enfant enfants kanner child children"], ["🎓", "school ecole école study studies university uni cours course formation"],
+  ["✈️", "travel voyage vacances holiday holidays trip flight vol urlaub"], ["🏖️", "beach plage summer été"], ["🧽", "wash lavage detailing cleaning nettoyage carwash"], ["🚗", "car voiture auto wagon garage"], ["⛽", "fuel essence diesel carburant tank"], ["🅿️", "parking"], ["🚌", "bus train tram transport"],
+  ["🎁", "gift gifts cadeau cadeaux present geschenk birthday anniversaire"], ["📱", "phone mobile telephone téléphone handy gsm"], ["💻", "computer pc laptop tech informatique"],
+  ["🎮", "games game gaming jeux jeu playstation xbox nintendo steam"], ["🎵", "music musique concert spotify"], ["📚", "books livres book buch"],
+  ["👕", "clothes vetements vêtements fashion mode kleider shoes chaussures"], ["💄", "beauty beaute beauté makeup cosmetics nails ongles"],
+  ["💊", "health sante santé pharmacy pharmacie doctor medecin médecin"], ["🦷", "dentist dentiste"], ["🏠", "home maison house haus rent loyer"],
+  ["🪴", "garden jardin plants plantes"], ["🛠️", "diy bricolage tools outils repair"], ["💡", "electricity electricite électricité energy energie énergie strom"],
+  ["🛡️", "insurance assurance versicherung"], ["🏛️", "tax taxes impots impôts steuer state etat état"], ["❤️", "charity don dons donation"],
+  ["🚬", "smoke smoking tabac cigarettes zigaretten vape"], ["🎬", "cinema cinéma movies films netflix streaming"], ["💍", "jewelry bijoux wedding mariage"],
+  ["🍽️", "restaurant food eating resto dinner diner dîner lunch dejeuner déjeuner"], ["🛒", "groceries courses food supermarket"], ["🧾", "bills factures"],
+  ["💰", "savings epargne épargne invest investment"], ["🎉", "party fete fête fun sortie sorties"], ["🧸", "toys jouets"], ["🏍️", "motorbike moto scooter"],
+];
+function suggestIcon(name) {
+  const w = (name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(x => x.length > 1);
+  if (!w.length) return null;
+  let best = null, score = 0;
+  for (const [e, words] of ICON_WORDS) {
+    const list = words.normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ");
+    for (const x of w) for (const y of list) { const sc = x === y ? 3 : (x.length > 3 && (y.startsWith(x) || x.startsWith(y))) ? 2 : 0; if (sc > score) { score = sc; best = e; } }
+  }
+  return best;
+}
+const EMOJIS = ["💈","🥤","☕","🍺","🎮","✈️","🐶","👶","🎓","💇","🏋️","🎁","🚬","📱","🧾","🚌","🅿️","🧺","🍔","🥖","💡","🧸","⚽","🎵","💄","🔧","🚗","🏖️","💍","🪴"];
 const catById = id => S.categories.find(c => c.id === id);
 const catCol = c => (c ? c.col : GRAY)[isDark() ? 1 : 0];
 const pc = i => PAL[i][isDark() ? 1 : 0];
@@ -463,7 +491,7 @@ const catsFor = amount => amount > 0 ? S.categories.filter(c => c.kind || c.id =
 /* ================= state ================= */
 function freshState() {
   return {v:2, categories:clone(DEFAULT_CATS), accounts:["BCEE","Crédit Agricole","Cash"], acctType:{BCEE:"current","Crédit Agricole":"current",Cash:"cash"}, balances:{},
-    acctIban:{}, acctRole:{}, tx:{}, payslips:[], model:{m:{}, t:{}}, imports:[], people:[], ious:[], loans:[], goals:[], settings:{payday:30, onboarded:false, holder:"", rulesV:0}};
+    acctIban:{}, acctRole:{}, lookup:{}, tx:{}, payslips:[], model:{m:{}, t:{}}, imports:[], people:[], ious:[], loans:[], goals:[], settings:{payday:30, onboarded:false, holder:"", rulesV:0, webLookup:true}};
 }
 let S = freshState();
 let DEMO = false;
@@ -568,7 +596,7 @@ function mkey(s) {
   return tk.slice(0, 2).join(" ") || "unknown";
 }
 let _brands = null;
-const BRANDS = () => _brands ||= new Set([...FUEL.filter(f => !["station","fuel","carburant","tankstelle","total"].includes(f)), "circle", ...KW.flatMap(([, w]) => w).filter(w => w.length > 3 && !w.includes(" ") && !["restaurant","resto","cafe","coffee","snack","pizza","pizzeria","sushi","brasserie","bistro","kebab","supermarche","supermarket","boulangerie","bakery","boucherie","pharmacie","pharmacy","apotheke","parking","garage","cinema","club","concert","ticket","tickets","museum","musee","festival","assurance","abonnement","frais","docteur","medecin","dentiste","dentist","hopital","hospital","clinique","laboratoire","optique","loyer","rent","immo","salaire","salary","lohn","paie","remuneration","allocations","remboursement","fitness","taxi","autoroute","peage","pneu","escape","casino","bowling","media","urban"].includes(w))]);
+const BRANDS = () => _brands ||= new Set([...FUEL.filter(f => !["station","fuel","carburant","tankstelle","total"].includes(f)), "circle", ...KW.flatMap(([, w]) => w).filter(w => w.length > 3 && !w.includes(" ") && !["restaurant","resto","cafe","coffee","snack","pizza","pizzeria","sushi","brasserie","bistro","kebab","supermarche","supermarket","boulangerie","bakery","boucherie","pharmacie","pharmacy","apotheke","parking","garage","cinema","club","concert","ticket","tickets","museum","musee","festival","assurance","abonnement","frais","docteur","medecin","dentiste","dentist","hopital","hospital","clinique","laboratoire","optique","loyer","rent","immo","salaire","salary","lohn","paie","remuneration","allocations","remboursement","fitness","taxi","autoroute","peage","pneu","escape","casino","bowling","media","urban"].includes(w) && !KW.find(k => k[0] === "barber")[1].includes(w))]);
 function prettyMerchant(raw) {
   let s = raw || "";
   const ib = s.match(/IBAN\s*([A-Z]{2}[\d ]{10,})/i);
@@ -586,6 +614,7 @@ function prettyMerchant(raw) {
 }
 const FUEL = ["aral","shell","esso","total","totalenergies","q8","gulf","bp","texaco","avia","lukoil","circle","tankstelle","carburant","fuel","station"];
 const KW = [
+  ["barber", ["barber","barbers","barbershop","barbier","coiffeur","coiffeuse","coiffure","friseur","frisor","hairdresser","haircut","hair","salon"]],
   ["groceries", ["delhaize","cactus","auchan","aldi","lidl","carrefour","match","cora","leclerc","intermarche","monoprix","colruyt","naturata","supermarche","supermarket","alnatura","rewe","edeka","spar","picard","boulangerie","bakery","boucherie","biocoop","pall","massen"]],
   ["transport", ["sncf","cfl","uber","bolt","parking","peage","autoroute","mobiliteit","garage","pneu","ctt","ionity","flixbus","luxair","ryanair","easyjet","taxi","indigo","sanef"]],
   ["dining", ["restaurant","resto","mcdonald","mcdonalds","burger","kfc","pizza","pizzeria","cafe","coffee","starbucks","deliveroo","wedely","sushi","brasserie","bistro","kebab","subway","quick","snack","foodora","ubereats","piri","dallmayr","dallmayrdistribution","vendingland","selecta","bar"]],
@@ -657,6 +686,8 @@ function predict(raw, amount, hint) {
       return {cat, conf:.72, why:"rule", key};
     }
   }
+  const lk = (S.lookup || {})[key];
+  if (amount < 0 && lk && lk.cat && catById(lk.cat)) return {cat:lk.cat, conf:.74, why:"web", key};
   if (amount > 0) return {cat:"income", conf:.62, why:"guess", key};
   if (hint && catById(hint) && !catById(hint).kind) return {cat:hint, conf:.6, why:"claude", usual:hint, key};
   return {cat:"other", conf:.3, why:"unknown", key};
@@ -686,10 +717,11 @@ function recheckReviews() {
   }
   return n;
 }
-const RULES_V = 4;
+const RULES_V = 5;
 function resort() {
   let n = 0;
   for (const t of allTx()) {
+    if (t.source === "bank" && !t.split && ["other", "health", "shopping"].includes(t.cat) && ruleGuess(t.raw, t.amount)?.cat === "barber") { if (t.userSet) untrain(learnText(t), t.amount, t.cat); t.cat = "barber"; delete t.review; train(learnText(t), t.amount, "barber"); touch(t); n++; continue; }
     if (t.source !== "bank" || t.userSet || t.split || t.loan) continue;
     const own = ownAccountFor(t.raw);
     if (own) { if (t.cat !== "transfer" || t.peer !== own || t.review) { t.cat = "transfer"; t.peer = own; delete t.review; touch(t); n++; } continue; }
@@ -942,6 +974,61 @@ function safeToSpend() {
     + S.loans.filter(l => l.balance > 0 && !l.key).reduce((a, l) => a + l.monthly, 0);
   const days = Math.max(1, dayDiff(t, next));
   return {perDay:r2((income - spent - upcoming) / days), days, left:r2(income - spent - upcoming), next, upcoming:r2(upcoming)};
+}
+
+/* ================= looking up what a shop is ================= */
+// OpenStreetMap place types → Pocket categories
+const OSM = {
+  hairdresser:"barber", beauty:"barber", barber:"barber",
+  supermarket:"groceries", convenience:"groceries", greengrocer:"groceries", bakery:"groceries", butcher:"groceries", deli:"groceries", alcohol:"groceries", beverages:"groceries", organic:"groceries", farm:"groceries", cheese:"groceries", seafood:"groceries", pastry:"groceries",
+  restaurant:"dining", fast_food:"dining", cafe:"dining", bar:"dining", pub:"dining", food_court:"dining", ice_cream:"dining", biergarten:"dining", vending_machine:"dining", coffee:"dining",
+  fuel:"transport", parking:"transport", car_wash:"transport", car_repair:"transport", car:"transport", car_parts:"transport", tyres:"transport", motorcycle:"transport", bicycle:"transport", charging_station:"transport",
+  pharmacy:"health", chemist:"health", doctors:"health", dentist:"health", clinic:"health", hospital:"health", optician:"health", fitness_centre:"health", sports_centre:"health", medical_supply:"health", physiotherapist:"health",
+  cinema:"fun", theatre:"fun", nightclub:"fun", casino:"fun", bowling_alley:"fun", escape_game:"fun", amusement_arcade:"fun", theme_park:"fun", museum:"fun", zoo:"fun", hotel:"fun",
+  clothes:"shopping", shoes:"shopping", department_store:"shopping", electronics:"shopping", mobile_phone:"shopping", computer:"shopping", books:"shopping", gift:"shopping", toys:"shopping", sports:"shopping", florist:"shopping", pet:"shopping", jewelry:"shopping", cosmetics:"shopping", perfumery:"shopping", variety_store:"shopping", mall:"shopping", bag:"shopping", fabric:"shopping", video_games:"shopping", outdoor:"shopping",
+  furniture:"housing", doityourself:"housing", hardware:"housing", garden_centre:"housing", houseware:"housing", interior_decoration:"housing", kitchen:"housing", paint:"housing", bathroom_furnishing:"housing",
+};
+const looked = new Set();
+async function lookupPlace(t) {
+  const name = t.merchant.replace(/^(From|To)\s+/i, "");
+  if (P.ai) {
+    const sample = await use("sample"); if (!sample) return null;
+    const ids = spendCats().map(c => c.id).join(", ");
+    const r = await sample.json(`A card payment on a Luxembourg bank statement reads "${t.raw || t.merchant}". From what you know, what kind of business is this? Return JSON only: {"category":"one of ${ids}, or unknown","what":"a few words, e.g. barber shop"}. Say unknown if you are not fairly sure.`, {modelTier:"quick"});
+    return r && catById(r.category) ? {cat:r.category, what:r.what || "", src:"Claude"} : null;
+  }
+  const q = encodeURIComponent(name.slice(0, 60));
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=jsonv2&limit=5&countrycodes=lu,fr,be,de&accept-language=en`, {headers:{"Accept":"application/json"}});
+  if (!res.ok) throw new Error("lookup " + res.status);
+  const list = await res.json();
+  const want = new Set(tokens(name).filter(w => w.length > 2));
+  for (const r of list) {
+    const cat = OSM[r.type] || (r.category === "shop" ? "shopping" : null);
+    if (!cat || !catById(cat)) continue;
+    const hit = tokens(r.name || r.display_name).filter(w => want.has(w)).length;
+    if (hit) return {cat, what:(r.type || "").replace(/_/g, " "), src:"OpenStreetMap"};
+  }
+  return null;
+}
+// Look up shops Pocket doesn't know yet, one at a time (OpenStreetMap asks for at most one request per second).
+let lookingUp = false;
+async function lookupUnknown() {
+  if (lookingUp || DEMO || S.settings.webLookup === false || !navigator.onLine) return;
+  lookingUp = true; let sorted = 0, tried = 0;
+  try {
+    const todo = new Map();
+    for (const t of allTx()) if (t.review?.t === "cat" && t.amount < 0 && !/^\s*VIR/i.test(t.raw || "")) { const k = mkey(learnText(t)); if (!S.lookup[k] && !looked.has(k) && !todo.has(k)) todo.set(k, t); }
+    for (const [k, t] of [...todo].slice(0, 40)) {
+      looked.add(k); tried++;
+      let r = null; try { r = await lookupPlace(t); } catch (e) { if (/lookup 429|lookup 403/.test(e.message)) break; }
+      S.lookup[k] = r ? r : {none:true, at:todayISO()};
+      if (r) for (const x of allTx()) if (x.review?.t === "cat" && mkey(learnText(x)) === k) { x.cat = r.cat; x.web = r.what + " · " + r.src; delete x.review; touch(x); sorted++; }
+      markMeta();
+      if (r) { render(); for (const s2 of sheets) s2.rerender(); }
+      await sleep(P.ai ? 300 : 1200);
+    }
+  } finally { lookingUp = false; }
+  if (sorted) toast(`Looked up ${tried} unknown place${tried === 1 ? "" : "s"} · ${sorted} sorted`);
 }
 
 /* ================= PDF + Claude reading ================= */
@@ -1365,7 +1452,8 @@ function renderSettings() {
   h += `<button class="row" data-a="tab" data-id="wealth"><span class="ico solid" style="--c:${PAL[1][0]}">€</span><div class="body"><div class="tt t1">Accounts</div><span class="v">${S.accounts.length}</span>${IC.chev}</div></button>`;
   h += `<div class="row"><span class="ico solid" style="--c:${PAL[0][0]}">📅</span><div class="body"><div class="tt t1">Payday</div><select id="payday" aria-label="Payday" style="flex:none;width:auto;color:var(--label2)">${Array.from({length:31}, (_, i) => `<option value="${i + 1}" ${S.settings.payday === i + 1 ? "selected" : ""}>${ord(i + 1)} of the month</option>`).join("")}</select></div></div>`;
   h += `<div class="row"><span class="ico solid" style="--c:#8E8E93">👤</span><div class="body"><span class="tt" style="flex:none">Name on statements</span><input id="holder" value="${esc(S.settings.holder || "")}" placeholder="Read from your first statement" aria-label="Your name as on bank statements"></div></div>`;
-  h += `</div><div class="sf">Transfers to and from your own name are counted as moving money between your accounts, not as spending. On the 1st, Pocket reminds you to upload last month's statements and payslip.</div>`;
+  h += `<div class="row"><span class="ico solid" style="--c:${PAL[5][0]}">🔎</span><div class="body"><div class="tt t1">Look up unknown places</div><button class="switch ${S.settings.webLookup !== false ? "on" : ""}" data-a="weblookup" role="switch" aria-checked="${S.settings.webLookup !== false}" aria-label="Look up unknown places online"></button></div></div>`;
+  h += `</div><div class="sf">${P.ai ? "Claude identifies shops Pocket doesn't know yet." : "Pocket searches OpenStreetMap for shops it doesn't know yet (only the shop's name is sent, never amounts or accounts)."} Transfers to and from your own name are counted as moving money between your accounts, not as spending. On the 1st, Pocket reminds you to upload last month's statements and payslip.</div>`;
   h += `<div class="sh"><span>Your data</span></div><div class="group">`;
   h += `<button class="row" data-a="page" data-id="imports"><span class="ico solid" style="--c:${PAL[5][0]}">⤓</span><div class="body"><div class="tt t1">Upload history</div><span class="v">${S.imports.length}</span>${IC.chev}</div></button>`;
   if (P.mode !== "cloud") h += `<button class="row" data-a="backup"><span class="ico solid" style="--c:${PAL[1][0]}">⇪</span><div class="body"><div class="tt"><div class="t1">Back up</div><div class="t2">${S.settings.lastBackup ? "Last: " + esc(longDate(S.settings.lastBackup)) : "Save a file to iCloud Drive or Files"}</div></div></div></button>`;
@@ -1497,7 +1585,7 @@ const XICON = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke
 const cancelBtn = `<button class="nb ic" data-a="close" aria-label="Cancel">${XICON}</button>`;
 function catGrid(selected, action, {suggest = null, cats = null} = {}) {
   const list = cats || S.categories.filter(c => c.kind !== "income");
-  return `<div class="cgrid" role="radiogroup">${list.map(c => `<button class="cg ${c.id === selected ? "on" : ""}" role="radio" aria-checked="${c.id === selected}" data-a="${action}" data-id="${c.id}">${icoHTML(c)}${suggest === c.id ? '<span class="sug" title="Suggested"></span>' : ""}<span>${esc(c.name)}</span></button>`).join("")}</div>`;
+  return `<div class="cgrid" role="radiogroup">${list.map(c => `<button class="cg ${c.id === selected ? "on" : ""}" role="radio" aria-checked="${c.id === selected}" data-a="${action}" data-id="${c.id}">${icoHTML(c)}${suggest === c.id ? '<span class="sug" title="Suggested"></span>' : ""}<span>${esc(c.name)}</span></button>`).join("")}<button class="cg" data-a="newcatfor" data-v="${action}"><span class="ico" style="--c:var(--tint);border:1.5px dashed color-mix(in srgb,var(--tint) 50%,transparent);background:none">＋</span><span>New category</span></button></div>`;
 }
 function bindLive(sh, ids, sync) { for (const id of ids) { const el = $("#" + id, sh.el); if (el) { el.addEventListener("input", sync); el.addEventListener("change", sync); } } }
 
@@ -1622,6 +1710,7 @@ function openTx(id) {
     const src = t.source === "payslip" ? "From your payslip" : t.source === "manual" ? (t.matched ? "Added by you, confirmed by bank" : "Added by you, waiting for the bank statement") : "From your " + (t.account || "bank") + " statement";
     let h = sheetNav("", cancelBtn, `<button class="nb b" data-a="close">Done</button>`) + `<div class="sheet-body"><div class="detail-h">${icoHTML(c)}<div class="a ${t.amount > 0 ? "pos" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</div><div class="m">${esc(t.merchant)}</div><div class="d">${esc(dayLabel(t.date))}</div></div>`;
     if (t.review) h += questionCard(t, true);
+    if (t.web) h += `<div class="sf" style="padding:0 32px 12px;text-align:center">Pocket looked this place up: ${esc(t.web)}.</div>`;
     if (viaHome(t)) h += `<div class="sf" style="padding:0 32px 12px;text-align:center">Counted as Home because ${esc(t.peer)} pays your home costs. Once you upload ${esc(t.peer)}'s statement for ${esc(monthOnly(ymOf(t.date)))}, its real bills count instead.</div>`;
     if (t.amount < 0 && kindOf(t) !== "transfer") {
       if (t.split) {
@@ -1688,7 +1777,7 @@ function questionCard(t, inDetail = false) {
   const order = [p.cat, r.usual, t.cat, "other", "dining", "groceries", "transport", "fun", "shopping"].filter((v, i, a) => v && a.indexOf(v) === i && catById(v));
   const pool = t.amount > 0 ? catsFor(1).map(c => c.id) : order.filter(id => catById(id).kind !== "income" && id !== "payback");
   const shown = t.amount > 0 ? pool : pool.slice(0, 5);
-  return `<div class="qcard" data-q="${t.id}">${head}<div class="q">${question(t)}</div><div class="acts">${shown.map((id, i) => `<button class="qchip ${i === 0 ? "main" : ""}" data-a="anscat" data-id="${t.id}" data-v="${id}"><span>${esc(catById(id).emoji)}</span>${esc(catById(id).name)}</button>`).join("")}${t.amount < 0 && !inDetail ? `<button class="qchip" data-a="tx" data-id="${t.id}">More…</button>` : ""}</div></div>`;
+  return `<div class="qcard" data-q="${t.id}">${head}<div class="q">${question(t)}</div><div class="acts">${shown.map((id, i) => `<button class="qchip ${i === 0 ? "main" : ""}" data-a="anscat" data-id="${t.id}" data-v="${id}"><span>${esc(catById(id).emoji)}</span>${esc(catById(id).name)}</button>`).join("")}${t.amount < 0 && !inDetail ? `<button class="qchip" data-a="tx" data-id="${t.id}">More…</button><button class="qchip" data-a="newcatq" data-id="${t.id}">＋ New category</button>` : ""}</div></div>`;
 }
 function openReviews() {
   openSheet(() => {
@@ -1813,19 +1902,29 @@ function formSheet({title, save = "Save", fields, onSave, extra = "", del = null
   return sh;
 }
 const formVals = sh => Object.fromEntries(sh.form.fields.map(f => [f.id, $("#ff-" + f.id, sh.el)?.value ?? ""]));
-function openCat(id) {
-  const c = id ? catById(id) : {id:"c" + uid(), name:"", emoji:EMOJIS[0], col:EXTRA[S.categories.length % EXTRA.length], budget:0, custom:true};
-  const d = clone(c);
+function openCat(id, onCreate) {
+  const used = new Set(S.categories.map(c => c.col[0]));
+  const c = id ? catById(id) : {id:"c" + uid(), name:"", emoji:"🏷️", col:[...EXTRA, ...PAL].find(x => !used.has(x[0])) || EXTRA[0], budget:0, custom:true};
+  const d = clone(c); let picked = !!id;
   const sh = openSheet(sh => {
     const colors = [...PAL, ...EXTRA];
     return sheetNav(id ? "Edit category" : "New category", cancelBtn, `<button class="nb b" data-a="savecat">${id ? "Save" : "Add"}</button>`) +
-      `<div class="sheet-body"><div class="detail-h" style="padding-bottom:10px">${icoHTML(d)}</div><div class="group"><div class="row"><div class="body"><input id="c-name" class="l" placeholder="Name (e.g. Coffee)" value="${esc(d.name)}" aria-label="Name"></div></div><div class="row"><div class="body"><span class="tt">Monthly limit</span><input id="c-bud" inputmode="decimal" placeholder="None" value="${d.budget || ""}" aria-label="Monthly limit"></div></div></div>
+      `<div class="sheet-body"><div class="detail-h" style="padding-bottom:6px" id="c-prev">${icoHTML(d)}</div><div class="sf" id="c-hint" style="text-align:center;padding:0 32px 10px;min-height:18px">${!picked && suggestIcon(d.name) ? "Icon suggested from the name. Tap another to change it." : ""}</div><div class="group"><div class="row"><div class="body"><input id="c-name" class="l" placeholder="Name (e.g. Barber, Coffee, Gym)" value="${esc(d.name)}" aria-label="Name" autocomplete="off"></div></div><div class="row"><div class="body"><span class="tt">Or type any emoji</span><input id="c-emo" placeholder="🙂" value="" aria-label="Your own emoji" style="flex:none;width:70px;font-size:22px"></div></div><div class="row"><div class="body"><span class="tt">Monthly limit</span><input id="c-bud" inputmode="decimal" placeholder="None" value="${d.budget || ""}" aria-label="Monthly limit"></div></div></div>
       <div class="sh"><span>Colour</span></div><div class="group" style="padding:12px;display:flex;flex-wrap:wrap;gap:12px">${colors.map((col, i) => `<button data-a="ccol" data-v="${i}" aria-label="Colour ${i + 1}" style="width:32px;height:32px;border-radius:50%;border:0;cursor:pointer;background:${col[isDark() ? 1 : 0]};box-shadow:${d.col[0] === col[0] ? `0 0 0 2px var(--card),0 0 0 4px ${col[isDark() ? 1 : 0]}` : "none"}"></button>`).join("")}</div>
-      <div class="sh"><span>Symbol</span></div><div class="group" style="padding:10px;display:grid;grid-template-columns:repeat(8,1fr);gap:4px">${[c.emoji, ...EMOJIS.filter(e => e !== c.emoji)].map(e => `<button data-a="cemo" data-v="${esc(e)}" style="height:40px;border-radius:10px;border:0;font-size:22px;cursor:pointer;background:${d.emoji === e ? "var(--fill2)" : "none"}">${esc(e)}</button>`).join("")}</div>
+      <div class="sh"><span>Symbol</span></div><div class="group" style="padding:10px;display:grid;grid-template-columns:repeat(8,1fr);gap:4px">${[...new Set([d.emoji, ...EMOJIS, ...ICON_WORDS.map(x => x[0])])].map(e => `<button data-a="cemo" data-v="${esc(e)}" style="height:40px;border-radius:10px;border:0;font-size:22px;cursor:pointer;background:${d.emoji === e ? "var(--fill2)" : "none"}">${esc(e)}</button>`).join("")}</div>
       ${id && !["other", "loan"].includes(d.id) ? `<div class="group" style="margin-top:28px"><button class="row" data-a="delcat"><div class="body" style="justify-content:center"><span style="color:var(--red)">Delete category</span></div></button></div><div class="sf">Its transactions move to Other.</div>` : ""}</div>`;
   });
-  sh.cat = d; sh.isNew = !id;
-  sh.after = () => { const sync = () => { d.name = $("#c-name", sh.el).value; d.budget = num($("#c-bud", sh.el).value); }; bindLive(sh, ["c-name", "c-bud"], sync); sh.sync = sync; };
+  sh.cat = d; sh.isNew = !id; sh.onCreate = onCreate; sh.pick = () => { picked = true; };
+  sh.after = () => {
+    const sync = () => {
+      d.name = $("#c-name", sh.el).value; d.budget = num($("#c-bud", sh.el).value);
+      const own = $("#c-emo", sh.el).value.trim(); if (own) { d.emoji = [...own].slice(0, 2).join(""); picked = true; }
+      if (!picked) { const sg = suggestIcon(d.name); if (sg) d.emoji = sg; $("#c-hint", sh.el).textContent = sg ? "Icon suggested from the name. Tap another to change it." : ""; }
+      $("#c-prev", sh.el).innerHTML = icoHTML(d);
+      $$('[data-a="cemo"]', sh.el).forEach(b => b.style.background = b.dataset.v === d.emoji ? "var(--fill2)" : "none");
+    };
+    bindLive(sh, ["c-name", "c-bud", "c-emo"], sync); sh.sync = sync;
+  };
   sh.rerender(false);
 }
 function openAccount(name, presetType) {
@@ -2026,15 +2125,23 @@ document.addEventListener("click", e => {
     icatpick() { const {st, t, parent} = top.icat; t.cat = id; delete t.review; delete t.loan; train(t.raw, t.amount, id);
       let n = 0; for (const o of st.prep.items) if (o !== t && o.review?.t === "cat" && !o.merge) { const p = predict(o.raw, o.amount); if (p.conf >= .7) { o.cat = p.cat; delete o.review; n++; } }
       closeSheet(top); parent.rerender(); if (n) toast(`${n} more sorted the same way`); },
-    commit() { const r = commitStatement(top.st); closeSheet(top); refreshAll(); toast(`Imported ${r.added}${r.merged ? " · matched " + r.merged : ""}${r.asked ? " · " + r.asked + " to check" : ""}`); },
+    commit() { const r = commitStatement(top.st); closeSheet(top); refreshAll(); toast(`Imported ${r.added}${r.merged ? " · matched " + r.merged : ""}${r.asked ? " · " + r.asked + " to check" : ""}`); setTimeout(lookupUnknown, 2500); },
     saveslip() { saveSlip(top); },
     slip() { openSlip(id); },
     delslip() { actionSheet({message:"Delete this payslip? Its salary entry is removed too, unless it came from your bank statement.", actions:[{label:"Delete payslip", destructive:true, fn() { const s = S.payslips.find(p => p.id === id); S.payslips = S.payslips.filter(p => p.id !== id); const t = allTx().find(x => x.slip === id && x.source === "payslip"); if (t) removeTx(t.id); S.imports = S.imports.filter(i => !(i.kind === "payslip" && s && i.period === s.period)); markMeta(); closeSheet(top); render(); }}]}); },
+    weblookup() { S.settings.webLookup = S.settings.webLookup === false; markMeta(); render(); if (S.settings.webLookup) { looked.clear(); lookupUnknown(); } },
     newcat() { openCat(null); },
+    newcatq() { const t = findTx(id); if (t) openCat(null, cid => answerOut(id, () => setCategory(t, cid))); },
+    newcatfor() { const parent = top; openCat(null, cid => {
+      if (!parent || !sheets.includes(parent)) return;
+      if (v === "pickadd") { parent.sync?.(); parent.data.cat = cid; parent.data.touched = true; parent.rerender(); }
+      else if (v === "pickcat") { const t = findTx(parent.txId); if (t) { setCategory(t, cid); refreshAll(); } }
+      else if (v === "icatpick") { const {st, t, parent:pp} = parent.icat; t.cat = cid; delete t.review; train(t.raw, t.amount, cid); closeSheet(parent); pp.rerender(); }
+    }); },
     editcat() { openCat(id); },
     ccol() { top.sync(); top.cat.col = [...PAL, ...EXTRA][+v]; top.rerender(); },
-    cemo() { top.sync(); top.cat.emoji = v; top.rerender(); },
-    savecat() { top.sync(); const d = top.cat; if (!d.name.trim()) { toast("Give the category a name."); return; } d.name = d.name.trim(); if (top.isNew) { const i = S.categories.findIndex(c => c.kind); S.categories.splice(i < 0 ? S.categories.length : i, 0, d); } else Object.assign(catById(d.id), d); markMeta(); closeSheet(top); render(); },
+    cemo() { top.pick(); top.sync(); top.cat.emoji = v; top.rerender(); },
+    savecat() { top.sync(); const d = top.cat; if (!d.name.trim()) { toast("Give the category a name."); return; } d.name = d.name.trim(); if (top.isNew) { const i = S.categories.findIndex(c => c.kind); S.categories.splice(i < 0 ? S.categories.length : i, 0, d); } else Object.assign(catById(d.id), d); const cb = top.onCreate; markMeta(); closeSheet(top); render(); for (const x of sheets) x.rerender(); if (cb) cb(d.id); toast(`${d.emoji} ${d.name} ${top.isNew ? "created" : "saved"}`); },
     delcat() { const d = top.cat; actionSheet({message:`Delete ${d.name}? Its transactions move to Other.`, actions:[{label:"Delete category", destructive:true, fn() { S.categories = S.categories.filter(c => c.id !== d.id); for (const k in S.tx) for (const t of S.tx[k]) if (t.cat === d.id) { t.cat = "other"; markMonth(k); } for (const m of Object.values(S.model.m)) delete m[d.id]; markMeta(); closeSheet(top); render(); }}]}); },
     forget() { delete S.model.m[id]; markMeta(); render(); toast("Forgotten"); },
     acct() { openAccount(id); },
@@ -2176,6 +2283,7 @@ async function start() {
   const empty = !Object.keys(S.tx).length && !S.payslips.length;
   render();
   if (!S.settings.onboarded && empty) welcome();
+  setTimeout(lookupUnknown, 4000);
   if (P.failed) toast("Couldn't reach your saved data. Working on this device for now.");
 }
 window.addEventListener("pagehide", flush);

@@ -460,6 +460,9 @@ const DEFAULT_CATS = [
   {id:"payback", name:"Friends paying back", emoji:"🤝", col:GREEN, kind:"transfer"},
   {id:"income", name:"Income", emoji:"💶", col:GREEN, kind:"income"},
 ];
+// 50/30/20: which categories count as needs; everything else spent counts as wants.
+const NEED_CATS = ["groceries", "transport", "health", "bills", "housing", "loan"];
+const bucketOf = c => c?.bucket || (NEED_CATS.includes(c?.id) ? "need" : "want");
 // Suggest an icon from a category name (English, French, German, Luxembourgish words).
 const ICON_WORDS = [
   ["💈", "barber barbier coiffeur coiffure friseur hair haircut salon cheveux"], ["☕", "coffee cafe café kaffi kaffee espresso"], ["🥤", "drink drinks energy monster redbull boisson soda"],
@@ -1377,6 +1380,30 @@ function trendPill(x) {
   return d > 0 ? `<span class="pill warn">▲ ${Math.round(d * 100)}%</span>` : `<span class="pill ok">▼ ${Math.round(-d * 100)}%</span>`;
 }
 function rangeMonths() { const end = UI.statsMonth; if (UI.range === "month") return [end]; const n = UI.range === "6m" ? 6 : 12; return Array.from({length:n}, (_, i) => addMonths(end, i - n + 1)); }
+function rule503020(byCat, spent, income) {
+  let h = `<div class="sh"><span>50/30/20 rule</span><button data-a="rulehelp">How it works</button></div>`;
+  if (!(income > 0)) return h + `<div class="group"><div class="empty">Add your payslip or bank statement for this period to see how your income splits into needs, wants and savings.</div></div>`;
+  const need = byCat.filter(x => bucketOf(x.c) === "need"), want = byCat.filter(x => bucketOf(x.c) === "want");
+  const sum = a => r2(a.reduce((s, x) => s + x.v, 0));
+  const nv = sum(need), wv = sum(want), sv = r2(income - nv - wv);
+  const pct = v => Math.round(v / income * 100);
+  const rows = [
+    {k:"Needs", target:50, v:nv, col:pc(1), cats:need, ok:pct(nv) <= 50},
+    {k:"Wants", target:30, v:wv, col:pc(2), cats:want, ok:pct(wv) <= 30},
+    {k:"Saved", target:20, v:sv, col:pc(0), cats:null, ok:pct(sv) >= 20},
+  ];
+  const w = v => Math.max(0, Math.min(100, v / income * 100)).toFixed(1);
+  h += `<div class="chart"><div style="display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--fill)">${rows.map(r => `<i style="display:block;width:${w(r.v)}%;background:${r.col}"></i>`).join("")}</div>`;
+  h += `<div style="display:flex;height:6px;margin-top:5px;gap:2px"><i style="flex:50;border-top:2px solid ${pc(1)};opacity:.6"></i><i style="flex:30;border-top:2px solid ${pc(2)};opacity:.6"></i><i style="flex:20;border-top:2px solid ${pc(0)};opacity:.6"></i></div>`;
+  h += `<div class="muted" style="font-size:13px">Top bar: your split of ${money0(income)} income. Lines underneath: the 50/30/20 target.</div></div>`;
+  h += `<div class="group" style="margin-top:10px">${rows.map(r => {
+    const p = pct(r.v), goal = r2(income * r.target / 100), diff = r2(r.k === "Saved" ? goal - r.v : r.v - goal);
+    const note = r.ok ? (r.k === "Saved" ? "On target" : `${money0(goal - r.v)} under the limit`) : r.k === "Saved" ? `${money0(diff)} short of ${r.target}%` : `${money0(diff)} over ${r.target}%`;
+    const top = r.cats ? r.cats.slice(0, 3).map(x => x.c.name).join(", ") : "Income minus spending";
+    return `<div class="row"><span class="ico" style="--c:${r.col}">${r.k === "Needs" ? "🏠" : r.k === "Wants" ? "🎉" : "💰"}</span><div class="body"><div class="tt"><div class="t1">${r.k} · <span class="${r.ok ? "pos" : "neg"}">${p}%</span> <span class="muted" style="font-weight:400">of ${r.target}%</span></div><div class="t2">${esc(note)}${top ? " · " + esc(top) : ""}</div></div><span class="amt">${money0(r.v)}</span></div></div>`;
+  }).join("")}</div>`;
+  return h + `<div class="sf">Change what counts as a need or a want in Settings → Categories & limits.</div>`;
+}
 function renderStats() {
   const months = rangeMonths(), list = months.flatMap(monthTx), spent = spendOf(list), income = incomeOf(list), byCat = catTotals(list);
   const label = UI.range === "month" ? monthLong(UI.statsMonth) : `${monthShort(months[0])} – ${monthLong(months[months.length - 1])}`;
@@ -1395,6 +1422,7 @@ function renderStats() {
     h += `<div class="chart">${donutSVG(byCat, spent)}<div class="tip"></div></div>`;
     h += `<div class="group" style="margin-top:10px">${byCat.map(x => `<button class="row" data-a="filtercat" data-id="${x.c.id}">${icoHTML(x.c)}<div class="body"><div class="tt"><div class="t1">${esc(x.c.name)}</div></div><span class="v num">${Math.round(x.v / spent * 100)}%</span><span class="amt" style="min-width:86px">${money(x.v)}</span>${IC.chev}</div></button>`).join("")}</div>`;
   } else h += `<div class="group"><div class="empty">No spending in this period yet.</div></div>`;
+  h += rule503020(byCat, spent, income);
   const trendM = Array.from({length:6}, (_, i) => addMonths(UI.statsMonth, i - 5));
   h += `<div class="sh"><span>Money in and out, last 6 months</span></div><div class="chart">${barsSVG(trendM)}<div class="legend" style="margin-top:6px"><span><i class="dot" style="--c:${pc(1)}"></i>Money out</span><span><i class="dot" style="--c:${pc(0)}"></i>Money in</span></div><div class="tip"></div></div>`;
   h += `<button class="askbar" data-a="insview" data-v="where" style="margin-top:14px">${IC.spark}<span style="flex:1;color:var(--label)">Where does my money go most?</span>${IC.chev}</button>`;
@@ -1579,7 +1607,7 @@ function pageNav(title, right = "") {
 const PAGES = {
   cats() {
     let h = pageNav("Categories", `<button class="nb ic" data-a="newcat" aria-label="New category">${IC.plus}</button>`) + `<div class="scroll"><h1 class="lt">Categories</h1>`;
-    h += `<div class="sh"><span>Spending</span></div><div class="group">${spendCats().map(c => `<button class="row" data-a="editcat" data-id="${c.id}">${icoHTML(c)}<div class="body"><div class="tt t1">${esc(c.name)}</div><span class="v">${c.budget > 0 ? money0(c.budget) + " / month" : ""}</span>${IC.chev}</div></button>`).join("")}</div>`;
+    h += `<div class="sh"><span>Spending</span></div><div class="group">${spendCats().map(c => `<button class="row" data-a="editcat" data-id="${c.id}">${icoHTML(c)}<div class="body"><div class="tt"><div class="t1">${esc(c.name)}</div><div class="t2">${bucketOf(c) === "need" ? "Need" : "Want"}</div></div><span class="v">${c.budget > 0 ? money0(c.budget) + " / month" : ""}</span>${IC.chev}</div></button>`).join("")}</div>`;
     h += `<div class="sf">Tap a category to rename it or set a monthly limit. Use + to add your own.</div>`;
     h += `<div class="sh"><span>Not counted as spending</span></div><div class="group">${S.categories.filter(c => c.kind).map(c => `<div class="row">${icoHTML(c)}<div class="body"><div class="tt t1">${esc(c.name)}</div></div></div>`).join("")}</div>`;
     return h + `<div style="height:20px"></div></div>`;
@@ -2039,7 +2067,7 @@ function openCat(id, onCreate) {
   const sh = openSheet(sh => {
     const colors = [...PAL, ...EXTRA];
     return sheetNav(id ? "Edit category" : "New category", cancelBtn, `<button class="nb b" data-a="savecat">${id ? "Save" : "Add"}</button>`) +
-      `<div class="sheet-body"><div class="detail-h" style="padding-bottom:6px" id="c-prev">${icoHTML(d)}</div><div class="sf" id="c-hint" style="text-align:center;padding:0 32px 10px;min-height:18px">${!picked && suggestIcon(d.name) ? "Icon suggested from the name. Tap another to change it." : ""}</div><div class="group"><div class="row"><div class="body"><input id="c-name" class="l" placeholder="Name (e.g. Barber, Coffee, Gym)" value="${esc(d.name)}" aria-label="Name" autocomplete="off"></div></div><div class="row"><div class="body"><span class="tt">Or type any emoji</span><input id="c-emo" placeholder="🙂" value="" aria-label="Your own emoji" style="flex:none;width:70px;font-size:22px"></div></div><div class="row"><div class="body"><span class="tt">Monthly limit</span><input id="c-bud" inputmode="decimal" placeholder="None" value="${d.budget || ""}" aria-label="Monthly limit"></div></div></div>
+      `<div class="sheet-body"><div class="detail-h" style="padding-bottom:6px" id="c-prev">${icoHTML(d)}</div><div class="sf" id="c-hint" style="text-align:center;padding:0 32px 10px;min-height:18px">${!picked && suggestIcon(d.name) ? "Icon suggested from the name. Tap another to change it." : ""}</div><div class="group"><div class="row"><div class="body"><input id="c-name" class="l" placeholder="Name (e.g. Barber, Coffee, Gym)" value="${esc(d.name)}" aria-label="Name" autocomplete="off"></div></div><div class="row"><div class="body"><span class="tt">Or type any emoji</span><input id="c-emo" placeholder="🙂" value="" aria-label="Your own emoji" style="flex:none;width:70px;font-size:22px"></div></div><div class="row"><div class="body"><span class="tt">Monthly limit</span><input id="c-bud" inputmode="decimal" placeholder="None" value="${d.budget || ""}" aria-label="Monthly limit"></div></div></div>${d.kind ? "" : `<div class="sh"><span>50/30/20 rule · counts as</span></div><div class="chips" style="padding-bottom:0">${[["need", "Need (50%)"], ["want", "Want (30%)"]].map(([v, l]) => `<button class="chip ${bucketOf(d) === v ? "on" : ""}" data-a="cbucket" data-v="${v}">${l}</button>`).join("")}</div><div class="sf">Needs are things you must pay, like rent, food and bills. Wants are extras you could cut.</div>`}
       <div class="sh"><span>Colour</span></div><div class="group" style="padding:12px;display:flex;flex-wrap:wrap;gap:12px">${colors.map((col, i) => `<button data-a="ccol" data-v="${i}" aria-label="Colour ${i + 1}" style="width:32px;height:32px;border-radius:50%;border:0;cursor:pointer;background:${col[isDark() ? 1 : 0]};box-shadow:${d.col[0] === col[0] ? `0 0 0 2px var(--card),0 0 0 4px ${col[isDark() ? 1 : 0]}` : "none"}"></button>`).join("")}</div>
       <div class="sh"><span>Symbol</span></div><div class="group" style="padding:10px;display:grid;grid-template-columns:repeat(8,1fr);gap:4px">${[...new Set([d.emoji, ...EMOJIS, ...ICON_WORDS.map(x => x[0])])].map(e => `<button data-a="cemo" data-v="${esc(e)}" style="height:40px;border-radius:10px;border:0;font-size:22px;cursor:pointer;background:${d.emoji === e ? "var(--fill2)" : "none"}">${esc(e)}</button>`).join("")}</div>
       ${id && !["other", "loan"].includes(d.id) ? `<div class="group" style="margin-top:28px"><button class="row" data-a="delcat"><div class="body" style="justify-content:center"><span style="color:var(--red)">Delete category</span></div></button></div><div class="sf">Its transactions move to Other.</div>` : ""}</div>`;
@@ -2277,6 +2305,8 @@ document.addEventListener("click", e => {
       else if (v === "icatpick") { const {st, t, parent:pp} = parent.icat; t.cat = cid; delete t.review; train(t.raw, t.amount, cid); closeSheet(parent); pp.rerender(); }
     }); },
     editcat() { openCat(id); },
+    rulehelp() { actionSheet({message:"The 50/30/20 rule splits your take-home pay: 50% for needs (rent, food, bills, transport, loans), 30% for wants (eating out, fun, shopping) and at least 20% saved. Pocket counts every spending category as a need or a want, and what's left of your income as saved. You can change any category in its settings.", actions:[]}); },
+    cbucket() { top.sync(); top.cat.bucket = v; top.rerender(); },
     ccol() { top.sync(); top.cat.col = [...PAL, ...EXTRA][+v]; top.rerender(); },
     cemo() { top.pick(); top.sync(); top.cat.emoji = v; top.rerender(); },
     savecat() { top.sync(); const d = top.cat; if (!d.name.trim()) { toast("Give the category a name."); return; } d.name = d.name.trim(); if (top.isNew) { const i = S.categories.findIndex(c => c.kind); S.categories.splice(i < 0 ? S.categories.length : i, 0, d); } else Object.assign(catById(d.id), d); const cb = top.onCreate; markMeta(); closeSheet(top); render(); for (const x of sheets) x.rerender(); if (cb) cb(d.id); toast(`${d.emoji} ${d.name} ${top.isNew ? "created" : "saved"}`); },

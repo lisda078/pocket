@@ -806,7 +806,11 @@ function mergeInto(mine, bank) {
   train(bank.raw, mine.amount, mine.cat);
 }
 const hashT = (d, a, raw) => d + "|" + r2(a) + "|" + String(raw || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+const cleanIban = v => String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const fmtIban = v => cleanIban(v).replace(/(.{4})/g, "$1 ").trim();
 function personFromRaw(raw) {
+  const l4 = ibanL4(raw);
+  if (l4) { const byIban = S.people.find(p => p.iban && p.iban.slice(-4) === l4); if (byIban) return byIban; }
   const t = new Set(tokens(raw));
   let best = null, score = 0;
   for (const p of S.people) { const pt = tokens(p.name).filter(w => w.length > 2); const hit = pt.filter(w => t.has(w)).length; if (hit > score) { best = p; score = hit; } }
@@ -1685,7 +1689,10 @@ const PAGES = {
     const b = personBalance(p.id), open = openItems(p.id), done = paidItems(p.id).slice(0, 20);
     let h = pageNav(p.name, `<button class="nb" data-a="editperson" data-id="${p.id}">Edit</button>`) + `<div class="scroll" style="padding-top:calc(env(safe-area-inset-top) + 52px)">`;
     h += `<div class="detail-h">${personIco(p).replace('class="ico lg', 'style="margin:0 auto 10px;width:72px;height:72px;font-size:26px" class="ico')}<div class="m" style="font-size:22px;line-height:28px">${esc(p.name)}</div><div class="a ${b > .009 ? "pos" : b < -.009 ? "neg" : ""}" style="font-size:34px;line-height:41px;margin-top:4px">${Math.abs(b) > .009 ? money(Math.abs(b)) : "Settled"}</div><div class="d">${b > .009 ? "owes you" : b < -.009 ? "you owe" : "Nothing open"}</div></div>`;
-    h += `<div class="qa">${b > .009 ? `<button data-a="copyremind" data-id="${p.id}">${IC.copy}Copy reminder</button>` : ""}${Math.abs(b) > .009 ? `<button data-a="settleall" data-id="${p.id}">${IC.done}Settle up</button>` : ""}<button data-a="newiou" data-id="${p.id}">${IC.plus}Add IOU</button></div>`;
+    h += `<div class="qa">${b > .009 ? `<button data-a="copyremind" data-id="${p.id}">${IC.copy}Copy reminder</button>` : ""}${Math.abs(b) > .009 ? `<button data-a="settleall" data-id="${p.id}">${IC.done}Settle up</button>` : ""}<button data-a="newiou" data-id="${p.id}">${IC.plus}Add IOU</button><button data-a="sendto" data-id="${p.id}">${IC.plus}Sent money</button></div>`;
+    h += `<div class="group" style="margin-top:14px"><button class="row" data-a="editperson" data-id="${p.id}"><div class="body"><span class="tt">Bank account</span><span class="v" style="font-size:15px">${p.iban ? esc(fmtIban(p.iban)) : "Add"}</span>${IC.chev}</div></button></div>`;
+    const sent = allTx().filter(t => t.to === p.id).sort((a, b) => b.date.localeCompare(a.date));
+    if (sent.length) h += `<div class="sh"><span>Money you sent</span><span class="num">${money(-sent.reduce((s2, t) => s2 + t.amount, 0))}</span></div><div class="group">${sent.slice(0, 30).map(t => txRow(t, {swipe:false, showDate:"year"})).join("")}</div>`;
     if (open.length) h += `<div class="sh"><span>Open</span></div><div class="group">${open.map((it, i) => `<div class="row"><span class="ico" style="--c:${it.kind === "split" ? catCol(catById(it.t.cat)) : catCol(null)}">${it.kind === "split" ? esc(catById(it.t.cat)?.emoji || "•") : "✎"}</span><div class="body"><div class="tt"><div class="t1">${esc(it.label)}</div><div class="t2">${esc(shortDate(it.date))}${it.kind === "split" ? " · total " + money(-it.t.amount) : ""}</div></div><span class="amt ${it.amount > 0 ? "pos" : "neg"}">${money(Math.abs(it.amount))}</span><button class="qchip" data-a="itempaid" data-id="${p.id}" data-v="${i}" style="height:30px">Paid</button></div></div>`).join("")}</div>`;
     if (done.length) h += `<div class="sh"><span>History</span></div><div class="group">${done.map(it => `<div class="row"><span class="ico" style="--c:${catCol(catById("income"))}">✓</span><div class="body"><div class="tt"><div class="t1">${esc(it.label)}</div><div class="t2">Paid ${esc(shortDate(it.date))}</div></div><span class="amt muted">${money(Math.abs(it.amount))}</span></div></div>`).join("")}</div>`;
     h += `<div class="sf">When ${esc(p.name.split(" ")[0])}'s bank transfer shows up in a statement, Pocket asks whether it's a repayment and settles it for you.</div>`;
@@ -1752,31 +1759,35 @@ function openAdd(prefill = {}) {
   const d = Object.assign({type:"out", amount:"", merchant:"", date:todayISO(), account:S.accounts[0] || "Cash", note:"", cat:null, touched:false, split:null}, prefill);
   const sh = openSheet(sh => {
     const amt = num(d.amount);
-    const p = d.merchant.trim() ? predict(d.merchant, d.type === "out" ? -(amt || 1) : (amt || 1)) : null;
-    if (!d.touched) d.cat = p && p.conf >= .45 ? p.cat : (d.type === "in" ? "income" : d.cat);
+    const p = d.type !== "send" && d.merchant.trim() ? predict(d.merchant, d.type === "out" ? -(amt || 1) : (amt || 1)) : null;
+    const isSend = d.type === "send", to = isSend && d.to ? personById(d.to) : null;
+    if (isSend) { if (!d.touched) d.cat = to?.lastCat && catById(to.lastCat) ? to.lastCat : null; }
+    else if (!d.touched) d.cat = p && p.conf >= .45 ? p.cat : (d.type === "in" ? "income" : d.cat);
     const cats = d.type === "in" ? S.categories.filter(c => c.kind === "income" || c.kind === "transfer" || c.id === "other") : catsFor(-1);
     const sp = d.split;
-    return sheetNav(d.type === "in" ? "Money in" : "New purchase", cancelBtn, `<button class="nb b" data-a="saveadd" ${amt > 0 && d.cat ? "" : "disabled"}>Add</button>`) +
-      `<div class="sheet-body">${seg("addtype", [["out", "Money out"], ["in", "Money in"]], d.type, "addtype")}
+    const people = S.people.slice().sort((a, b) => (b.uses || 0) - (a.uses || 0));
+    return sheetNav(d.type === "in" ? "Money in" : isSend ? "Send money" : "New purchase", cancelBtn, `<button class="nb b" data-a="saveadd" ${amt > 0 && d.cat && (!isSend || to) ? "" : "disabled"}>Add</button>`) +
+      `<div class="sheet-body">${seg("addtype", [["out", "Purchase"], ["send", "Sent"], ["in", "Money in"]], d.type, "addtype")}
       <div class="amount-in"><input id="f-amt" inputmode="decimal" placeholder="0,00" value="${esc(d.amount)}" aria-label="Amount in euros" autocomplete="off"><span style="font-family:var(--round);font-size:34px;font-weight:700;color:var(--label2)">€</span></div>
       ${d.type === "out" ? `<div class="qa" style="margin:6px 16px 4px"><button data-a="addsplit">${IC.split}${sp ? `Split ${sp.people.length + (sp.me ? 1 : 0)} ways ✓` : "Split the bill"}</button>${P.ai ? `<label style="flex:1;display:flex"><button data-a="scan" type="button" style="width:100%">${IC.cam}Scan receipt</button></label><input id="f-rcpt" type="file" accept="image/*" hidden>` : ""}</div>` : ""}
+      ${isSend ? `<div class="sh"><span>To who?</span>${to ? `<button data-a="editperson" data-id="${to.id}">Edit contact</button>` : ""}</div><div class="chips">${people.map(x => `<button class="chip ${to && to.id === x.id ? "on" : ""}" data-a="pickto" data-id="${x.id}">${esc(x.name)}</button>`).join("")}<button class="chip" data-a="newto" style="color:var(--tint)">＋ New contact</button></div>${to ? `<div class="sf" style="padding-top:0">${to.iban ? "Account " + esc(fmtIban(to.iban)) : "No account number saved"}</div>` : people.length ? "" : `<div class="sf" style="padding-top:0">Create a contact for the person you sent money to. Their account number is optional.</div>`}` : ""}
       <div class="group" style="margin-top:8px">
-        <div class="row"><div class="body"><input id="f-mer" class="l" placeholder="${d.type === "in" ? "From (e.g. refund from Marc)" : "Where? (e.g. Delhaize)"}" value="${esc(d.merchant)}" aria-label="Where" autocomplete="off"></div></div>
+        ${isSend ? "" : `<div class="row"><div class="body"><input id="f-mer" class="l" placeholder="${d.type === "in" ? "From (e.g. refund from Marc)" : "Where? (e.g. Delhaize)"}" value="${esc(d.merchant)}" aria-label="Where" autocomplete="off"></div></div>`}
         <div class="row"><div class="body"><span class="tt">Date</span><input id="f-date" type="date" value="${d.date}" max="${todayISO()}" style="flex:none;width:auto"></div></div>
         <div class="row"><div class="body"><span class="tt">Account</span><select id="f-acc" style="flex:none;width:auto;color:var(--label2)">${S.accounts.map(a => `<option ${a === d.account ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></div></div>
-        <div class="row"><div class="body"><input id="f-note" class="l" placeholder="Note (optional)" value="${esc(d.note)}" aria-label="Note"></div></div>
+        <div class="row"><div class="body"><input id="f-note" class="l" placeholder="${isSend ? "Note (e.g. food she bought me)" : "Note (optional)"}" value="${esc(d.note)}" aria-label="Note"></div></div>
       </div>
       ${sp ? `<div class="sf">${esc(splitSummary(sp, amt))}</div>` : ""}
-      <div class="sh"><span>Category</span>${p && !d.touched && p.conf >= .45 ? `<span class="pill tint" style="text-transform:none">Suggested from your habits</span>` : ""}</div>
+      <div class="sh"><span>${isSend ? "Category · what was it for?" : "Category"}</span>${p && !d.touched && p.conf >= .45 ? `<span class="pill tint" style="text-transform:none">Suggested from your habits</span>` : ""}</div>
       ${catGrid(d.cat, "pickadd", {suggest:p && p.conf >= .45 ? p.cat : null, cats})}
-      <div class="sf">When your bank statement arrives, this purchase is matched with the bank line, so it's never counted twice.</div></div>`;
+      <div class="sf">${isSend ? "It counts as spending in the category you pick. " : ""}When your bank statement arrives, this is matched with the bank line, so it's never counted twice.</div></div>`;
   });
   sh.data = d;
   sh.after = () => {
-    const sync = () => { d.amount = $("#f-amt", sh.el).value; d.merchant = $("#f-mer", sh.el).value; d.date = $("#f-date", sh.el).value || todayISO(); d.account = $("#f-acc", sh.el).value; d.note = $("#f-note", sh.el).value; };
+    const sync = () => { d.amount = $("#f-amt", sh.el).value; d.merchant = $("#f-mer", sh.el)?.value ?? d.merchant; d.date = $("#f-date", sh.el).value || todayISO(); d.account = $("#f-acc", sh.el).value; d.note = $("#f-note", sh.el).value; };
     let t = null;
     const refresh = () => { sync(); clearTimeout(t); t = setTimeout(() => { const f = document.activeElement?.id, pos = document.activeElement?.selectionStart; sh.rerender(); const el = f && $("#" + f, sh.el); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (e) {} } }, 400); };
-    $("#f-amt", sh.el).addEventListener("input", refresh); $("#f-mer", sh.el).addEventListener("input", refresh);
+    $("#f-amt", sh.el).addEventListener("input", refresh); $("#f-mer", sh.el)?.addEventListener("input", refresh);
     ["#f-date", "#f-acc", "#f-note"].forEach(s => $(s, sh.el).addEventListener("change", sync));
     const rc = $("#f-rcpt", sh.el);
     if (rc) rc.addEventListener("change", async () => {
@@ -1794,6 +1805,12 @@ function openAdd(prefill = {}) {
 function saveAdd(sh) {
   sh.sync(); const d = sh.data, v = num(d.amount);
   if (!(v > 0)) return;
+  if (d.type === "send") {
+    const to = personById(d.to); if (!to) { toast("Pick who you sent it to."); return; }
+    const t = {id:uid(), date:d.date, amount:r2(-v), merchant:to.name, account:d.account, note:d.note.trim(), cat:d.cat, source:"manual", to:to.id};
+    addTx(t); to.uses = (to.uses || 0) + 1; to.lastCat = d.cat; markMeta();
+    closeSheet(sh); render(); toast(`Sent ${money(v)} to ${to.name.split(" ")[0]} · ${catById(d.cat)?.name}`); return;
+  }
   const amount = r2(d.type === "out" ? -v : v), merchant = d.merchant.trim() || catById(d.cat)?.name || "Purchase";
   const t = {id:uid(), date:d.date, amount, merchant, account:d.account, note:d.note.trim(), cat:d.cat, source:"manual"};
   if (d.split && d.type === "out") t.split = buildSplit(d.split, v);
@@ -2144,12 +2161,18 @@ function openIOU(pid) {
       S.ious.push({id:uid(), pid:person.id, amount:v.dir === "me" ? -a : a, note:v.note.trim(), date:todayISO(), paid:false}); markMeta();
     }});
 }
-function openPerson(id) {
+function openPerson(id, onCreate) {
   const p = id ? personById(id) : null;
-  formSheet({title:p ? "Edit person" : "New person", save:p ? "Save" : "Add", short:true, fields:[{id:"name", ph:"Name as on bank transfers (e.g. Sophie Martin)", value:p?.name || ""}],
-    extra:`<div class="sf">Use the name as it appears on their bank transfers so Pocket can spot repayments.</div>`,
+  formSheet({title:p ? "Edit contact" : "New contact", save:p ? "Save" : "Add", short:true, fields:[{id:"name", ph:"Name as on bank transfers (e.g. Sophie Martin)", value:p?.name || ""}, {id:"iban", ph:"Bank account / IBAN (optional)", value:p?.iban ? fmtIban(p.iban) : ""}],
+    extra:`<div class="sf">Use the name as it appears on their bank transfers. With their account number too, Pocket recognises transfers to and from them in your statements even when the name is cut off.</div>`,
     del:p ? {label:"Delete person", fn() { if (Math.abs(personBalance(p.id)) > .009) { toast("Settle up first."); return false; } S.people = S.people.filter(x => x.id !== p.id); UI.pages.people = []; markMeta(); }} : null,
-    onSave(v) { const n = v.name.trim(); if (!n) return "Add a name."; if (p) p.name = n; else ensurePerson(n); markMeta(); }});
+    onSave(v) {
+      const n = v.name.trim(); if (!n) return "Add a name.";
+      const ib = cleanIban(v.iban); if (ib && (ib.length < 8 || ib.length > 34)) return "That account number looks too short or too long.";
+      let q = p; if (q) q.name = n; else { q = S.people.find(x => x.name.toLowerCase() === n.toLowerCase()) || ensurePerson(n); q.uses = Math.max(0, (q.uses || 1) - 1); }
+      if (ib) q.iban = ib; else delete q.iban;
+      markMeta(); if (onCreate) onCreate(q.id);
+    }});
 }
 function openPayment(loanId, extra) {
   const l = S.loans.find(x => x.id === loanId);
@@ -2259,6 +2282,9 @@ document.addEventListener("click", e => {
     page() { pagesOf().push({id, x:el.dataset.x}); UI.pushAnim = true; render(); },
     back() { pagesOf().pop(); render(); },
     addtype() { top.sync(); top.data.type = v; top.data.touched = false; top.data.cat = null; top.data.split = null; top.rerender(); },
+    pickto() { top.sync(); top.data.to = id; top.data.touched = false; top.rerender(); },
+    newto() { const add = top; add.sync(); openPerson(null, pid => { add.data.to = pid; add.data.touched = false; }); },
+    sendto() { openAdd({type:"send", to:id}); },
     pickadd() { top.sync(); top.data.cat = id; top.data.touched = true; top.rerender(); },
     saveadd() { saveAdd(top); },
     addsplit() { top.sync(); const amt = num(top.data.amount); if (!(amt > 0)) { toast("Enter the total amount first."); $("#f-amt", top.el)?.focus(); return; } const parent = top; openSplit(amt, parent.data.split, sp => { parent.data.split = sp; parent.rerender(); }); },

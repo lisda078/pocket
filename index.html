@@ -444,6 +444,7 @@ const PAL = [["#28A745","#25A048"],["#007AFF","#0A84FF"],["#E68600","#D07E08"],[
 const EXTRA = [["#00A39A","#00B8AE"],["#C7A200","#D4AE00"],["#D1458F","#E0559F"],["#3A7D44","#4A9A55"],["#FF3B30","#FF453A"],["#6E6E73","#98989D"]];
 const GRAY = ["#8E8E93","#98989D"];
 const GREEN = ["#248A3D","#30D158"];
+const APP_V = 13; // keep in step with VERSION in sw.js
 const DEFAULT_CATS = [
   {id:"groceries", name:"Groceries", emoji:"🛒", col:PAL[0]},
   {id:"transport", name:"Transport & fuel", emoji:"🚗", col:PAL[1]},
@@ -1601,7 +1602,7 @@ function renderSettings() {
   if (P.mode !== "cloud") h += `<button class="row" data-a="backup"><span class="ico solid" style="--c:${PAL[1][0]}">⇪</span><div class="body"><div class="tt"><div class="t1">Back up</div><div class="t2">${S.settings.lastBackup ? "Last: " + esc(longDate(S.settings.lastBackup)) : "Save a file to iCloud Drive or Files"}</div></div></div></button>`;
   if (P.mode !== "cloud") h += `<label class="row tap" for="f-restore"><span class="ico solid" style="--c:#8E8E93">⤓</span><div class="body"><div class="tt t1">Restore from a backup</div></div></label><input id="f-restore" type="file" accept="application/json,.json" hidden>`;
   h += `<button class="row" data-a="wipe"><div class="body"><div class="tt t1" style="color:var(--red)">${DEMO ? "Leave example data" : "Delete all data"}</div></div></button>`;
-  h += `</div><div class="sf">${P.mode === "cloud" ? "Your data is private to your account. Nobody else who opens this page can see it." : "Your data is stored only on this iPhone. Make a backup now and then, so you can restore it if you change phone."}</div>`;
+  h += `</div><div class="sf">${P.mode === "cloud" ? "Your data is private to your account. Nobody else who opens this page can see it." : "Your data is stored only on this iPhone. Make a backup now and then, so you can restore it if you change phone."}</</div><div class="sf" style="text-align:center">Pocket version ${APP_V}</div>`;
   return h + `</div>`;
 }
 function pageNav(title, right = "") {
@@ -2473,7 +2474,15 @@ async function start() {
   P.ai = !!(await use("sample"));
   if ((S.settings.rulesV || 0) < RULES_V && Object.keys(S.tx).length) { const n = resort(); flush(); if (n) setTimeout(() => toast(`Pocket got smarter: ${n} transaction${n === 1 ? "" : "s"} re-sorted`), 900); }
   if (P.mode !== "cloud") { try { navigator.storage?.persist?.(); } catch (e) {} }
-  if ("serviceWorker" in navigator && /github\.io$|localhost/.test(location.hostname)) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && /github\.io$|localhost/.test(location.hostname)) {
+    // Check for a new version on every launch and whenever the app comes back to the front, then switch to it.
+    const had = !!navigator.serviceWorker.controller; let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (!had || reloaded) return; reloaded = true; flush(); setTimeout(() => location.reload(), 300); });
+    navigator.serviceWorker.register("sw.js", {updateViaCache:"none"}).then(reg => {
+      reg.update().catch(() => {});
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+    }).catch(() => {});
+  }
   const empty = !Object.keys(S.tx).length && !S.payslips.length;
   render();
   if (!S.settings.onboarded && empty) welcome();
